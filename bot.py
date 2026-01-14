@@ -1,3 +1,4 @@
+print("FORCE REBUILD 1")
 import nest_asyncio
 nest_asyncio.apply()
 
