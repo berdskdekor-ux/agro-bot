@@ -2,7 +2,7 @@ print("FORCE REBUILD 1")
 import nest_asyncio
 nest_asyncio.apply()
 
-import json, datetime, time, threading, requests
+import json, datetime, time, requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import openai
@@ -123,17 +123,16 @@ app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start",start))
 app.add_handler(MessageHandler(filters.ALL,handler))
 
-threading.Thread(target=reminder_loop,args=(app,),daemon=True).start()
-
 import asyncio
 
-async def runner():
-    await app.initialize()
-    await app.start()
-    print("🤖 Бот запущен и работает")
-    await asyncio.Event().wait()
 
-asyncio.get_event_loop().create_task(runner())
+async def main():
+    print("🤖 Бот запускается...")
+    app.create_task(reminder_loop_async())
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 
