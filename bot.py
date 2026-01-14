@@ -1,7 +1,4 @@
-print("FORCE REBUILD 3")
-
-import nest_asyncio
-nest_asyncio.apply()
+print("FORCE REBUILD 4")
 
 import json, datetime, requests, os, asyncio
 from telegram import Update, ReplyKeyboardMarkup
@@ -111,12 +108,12 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ans)
 
 # ====== REMINDERS ======
-async def reminder_loop():
+async def reminder_loop(application):
     while True:
         now = datetime.datetime.now()
         for r in reminders[:]:
             if now >= r["time"]:
-                await app.bot.send_message(r["user"], "⏰ Пора заняться растениями 🌱")
+                await application.bot.send_message(r["user"], "⏰ Пора заняться растениями 🌱")
                 reminders.remove(r)
         await asyncio.sleep(30)
 
@@ -127,13 +124,9 @@ app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.ALL, handler))
 
-async def main():
-    print("🤖 Бот запущен")
-    app.create_task(reminder_loop())
-    await app.run_polling()
+app.job_queue.run_once(lambda *_: asyncio.create_task(reminder_loop(app)), 1)
 
-if __name__ == "__main__":
-    asyncio.run(main())
-
+print("🤖 Бот запущен")
+app.run_polling()
 
 
