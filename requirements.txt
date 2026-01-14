@@ -1,8 +1,8 @@
 python-telegram-bot==20.7
-openai
 requests
 nest_asyncio
 python-dotenv
+
 
 
 
