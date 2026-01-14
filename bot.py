@@ -1,4 +1,4 @@
-print("FORCE REBUILD 4")
+print("FORCE REBUILD FINAL")
 
 import json, datetime, requests, os, asyncio
 from telegram import Update, ReplyKeyboardMarkup
@@ -29,13 +29,11 @@ def load():
     except:
         pass
 
-# ====== LOGIC ======
-def is_premium(uid):
-    return user_data.get(uid, {}).get("premium", False)
-
+# ====== WEATHER ======
 def get_week_weather(city):
     url = f"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
     data = requests.get(url).json()
+
     days = {}
     for item in data["list"]:
         date = item["dt_txt"].split(" ")[0]
@@ -43,26 +41,28 @@ def get_week_weather(city):
         desc = item["weather"][0]["description"]
         days.setdefault(date, []).append((temp, desc))
 
-    text = "🌦 Прогноз на 7 дней:\n\n"
+    text = "🌦 Прогноз на ближайшие дни:\n\n"
     for d, values in list(days.items())[:7]:
         avg = sum(v[0] for v in values) / len(values)
         text += f"{d}: {values[0][1]}, {round(avg,1)}°C\n"
+
     return text
 
+# ====== GPT ======
 async def ask_gpt(region, q):
     r = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role":"system","content":f"Ты опытный агроном. Регион {region}. Пиши пошагово."},
-            {"role":"user","content":q}
+            {"role": "system", "content": f"Ты опытный агроном. Регион {region}. Пиши пошагово."},
+            {"role": "user", "content": q}
         ]
     )
     return r.choices[0].message.content
 
 # ====== UI ======
 menu = ReplyKeyboardMarkup(
-    [["🌦 Погода","📸 Диагностика"],
-     ["⏰ Напоминание","💎 Премиум"]],
+    [["🌦 Погода", "📸 Диагностика"],
+     ["⏰ Напоминание", "💎 Премиум"]],
     resize_keyboard=True
 )
 
@@ -78,10 +78,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = user_data.setdefault(uid, {})
 
     if update.message.photo:
-        if not is_premium(uid):
+        if not d.get("premium"):
             await update.message.reply_text("📸 Диагностика доступна только в Премиум.")
             return
-        await update.message.reply_text("🔍 Похоже на дефицит азота. Рекомендуется комплексная подкормка.")
+        await update.message.reply_text("🔍 Возможно дефицит азота. Рекомендуется комплексная подкормка.")
         return
 
     text = update.message.text
@@ -108,12 +108,12 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ans)
 
 # ====== REMINDERS ======
-async def reminder_loop(application):
+async def reminder_loop(app):
     while True:
         now = datetime.datetime.now()
         for r in reminders[:]:
             if now >= r["time"]:
-                await application.bot.send_message(r["user"], "⏰ Пора заняться растениями 🌱")
+                await app.bot.send_message(r["user"], "⏰ Пора заняться растениями 🌱")
                 reminders.remove(r)
         await asyncio.sleep(30)
 
@@ -124,12 +124,14 @@ app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.ALL, handler))
 
+async def main():
+    asyncio.create_task(reminder_loop(app))
+    print("🤖 Бот полностью запущен")
+    await app.run_polling()
 
-async def post_init(app):
-    asyncio.create_task(reminder_loop())
+if __name__ == "__main__":
+    asyncio.run(main())
 
-
-app.post_init = post_init
 
 
 if __name__ == "__main__":
