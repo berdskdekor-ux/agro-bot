@@ -124,9 +124,16 @@ app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.ALL, handler))
 
-app.job_queue.run_once(lambda *_: asyncio.create_task(reminder_loop(app)), 1)
 
-print("🤖 Бот запущен")
-app.run_polling()
+async def post_init(app):
+    asyncio.create_task(reminder_loop())
+
+
+app.post_init = post_init
+
+
+if __name__ == "__main__":
+    print("🤖 Бот запущен")
+    app.run_polling()
 
 
