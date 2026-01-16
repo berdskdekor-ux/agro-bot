@@ -1,137 +1,242 @@
-print["FORCE REBUILD FINAL"]
-
-import json, datetime, requests, os, asyncio
+import json
+import datetime
+import requests
+import os
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-import openai
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
+from openai import OpenAI
 
-# ====== KEYS ======
+# ==================== КОНФИГУРАЦИЯ ====================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+if not all([TELEGRAM_TOKEN, OPENAI_API_KEY, WEATHER_API_KEY]):
+    print("ОШИБКА: Не все необходимые переменные окружения установлены!")
+    print("Нужны: TELEGRAM_TOKEN, OPENAI_API_KEY, WEATHER_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 DATA_FILE = "data.json"
+
+# Глобальные хранилища
 user_data = {}
 reminders = []
 
-# ====== STORAGE ======
-def save():
-    with open(DATA_FILE, "w") as f:
-        json.dump(user_data, f)
-
-def load():
+# ==================== ХРАНЕНИЕ ДАННЫХ ====================
+def load_data():
     global user_data
+    if not os.path.exists(DATA_FILE):
+        return
     try:
-        with open(DATA_FILE) as f:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             user_data = json.load(f)
-    except:
-        pass
+    except Exception as e:
+        print("Ошибка загрузки data.json:", e)
 
-# ====== WEATHER ======
-def get_week_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-    data = requests.get(url).json()
 
-    days = {}
-    for item in data["list"]:
-        date = item["dt_txt"].split(" ")[0]
-        temp = item["main"]["temp"]
-        desc = item["weather"][0]["description"]
-        days.setdefault(date, []).append((temp, desc))
+def save_data():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Ошибка сохранения data.json:", e)
 
-    text = "🌦 Прогноз на ближайшие дни:\n\n"
-    for d, values in list(days.items())[:7]:
-        avg = sum(v[0] for v in values) / len(values)
-        text += f"{d}: {values[0][1]}, {round(avg,1)}°C\n"
 
-    return text
+# ==================== ПОГОДА ====================
+def get_week_weather(city: str) -> str:
+    if not WEATHER_API_KEY:
+        return "Прогноз погоды временно недоступен (нет ключа API)"
 
-# ====== GPT ======
-async def ask_gpt(region, q):
-    r = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": f"Ты опытный агроном. Регион {region}. Пиши пошагово."},
-            {"role": "user", "content": q}
-        ]
+    url = (
+        f"https://api.openweathermap.org/data/2.5/forecast"
+        f"?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
     )
-    return r.choices[0].message.content
 
-# ====== UI ======
-menu = ReplyKeyboardMarkup(
-    [["🌦 Погода", "📸 Диагностика"],
-     ["⏰ Напоминание", "💎 Премиум"]],
-    resize_keyboard=True
+    try:
+        resp = requests.get(url, timeout=10).json()
+        if resp.get("cod") != "200":
+            return f"Ошибка погоды: {resp.get('message', 'неизвестная ошибка')}"
+
+        days = {}
+        for item in resp["list"]:
+            date = item["dt_txt"].split(" ")[0]
+            temp = item["main"]["temp"]
+            desc = item["weather"][0]["description"]
+            days.setdefault(date, []).append((temp, desc))
+
+        lines = ["🌦 Прогноз на ближайшие дни:\n"]
+        for d, values in list(days.items())[:5]:  # разумнее ограничить 5 днями
+            avg = sum(v[0] for v in values) / len(values)
+            lines.append(f"{d}: {values[0][1].capitalize()}, ≈{round(avg,1)}°C")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Не удалось получить погоду: {str(e)}"
+
+
+# ==================== GPT ====================
+async def ask_gpt(region: str, question: str) -> str:
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"Ты опытный агроном-консультант. Регион выращивания — {region}. "
+                    "Отвечай пошагово, понятно, практически. Используй русский язык.",
+                },
+                {"role": "user", "content": question},
+            ],
+            temperature=0.75,
+            max_tokens=1200,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠ Ошибка GPT: {str(e)[:180]}"
+
+
+# ==================== КЛАВИАТУРА ====================
+main_menu = ReplyKeyboardMarkup(
+    [["🌦 Погода", "📸 Диагностика"], ["⏰ Напоминание", "💎 Премиум"]],
+    resize_keyboard=True,
+    input_field_placeholder="Выберите действие...",
 )
 
-# ====== HANDLERS ======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    user_data[uid] = {}
-    await update.message.reply_text("Введите ваш регион:")
-    save()
 
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==================== HANDLERS ====================
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
-    d = user_data.setdefault(uid, {})
+    user_data[uid] = user_data.get(uid, {})
+    await update.message.reply_text("Привет! Введите ваш регион выращивания (например: Подмосковье, Краснодарский край, Беларусь и т.д.)")
+    save_data()
 
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+
+    uid = str(update.effective_user.id)
+    user = user_data.setdefault(uid, {})
+
+    # Обработка фото (диагностика)
     if update.message.photo:
-        if not d.get("premium"):
-            await update.message.reply_text("📸 Диагностика доступна только в Премиум.")
+        if not user.get("premium", False):
+            await update.message.reply_text("📸 Диагностика растений доступна только в Премиум-версии!")
             return
-        await update.message.reply_text("🔍 Возможно дефицит азота. Рекомендуется комплексная подкормка.")
+        # Здесь должна быть настоящая обработка фото через vision-модель
+        await update.message.reply_text("🔍 Пока заглушка: возможно дефицит азота.\nРекомендую внести комплексное удобрение с преобладанием азота.")
         return
 
-    text = update.message.text
+    text = update.message.text.strip()
 
-    if "region" not in d:
-        d["region"] = text
-        await update.message.reply_text("Готово 🌿", reply_markup=menu)
-        save()
+    # Первый вход — регион
+    if "region" not in user:
+        user["region"] = text
+        await update.message.reply_text("Отлично, регион сохранён! 🌱", reply_markup=main_menu)
+        save_data()
         return
 
+    # Команды меню
     if text == "🌦 Погода":
-        await update.message.reply_text(get_week_weather(d["region"]))
-    elif text == "📸 Диагностика":
-        await update.message.reply_text("Пришлите фото растения.")
-    elif text == "⏰ Напоминание":
-        reminders.append({"user": uid, "time": datetime.datetime.now() + datetime.timedelta(minutes=1)})
-        await update.message.reply_text("Напоминание установлено.")
-    elif text == "💎 Премиум":
-        d["premium"] = True
-        await update.message.reply_text("💎 Премиум активирован!")
-        save()
-    else:
-        ans = await ask_gpt(d["region"], text)
-        await update.message.reply_text(ans)
+        city = user["region"]
+        weather_text = get_week_weather(city)
+        await update.message.reply_text(weather_text)
 
-# ====== REMINDERS ======
-async def reminder_loop(app):
+    elif text == "📸 Диагностика":
+        if user.get("premium", False):
+            await update.message.reply_text("Пришлите фото растения (лучше всего лист крупным планом)")
+        else:
+            await update.message.reply_text("Эта функция доступна только в Премиум-версии 💎")
+
+    elif text == "⏰ Напоминание":
+        remind_time = datetime.datetime.now() + datetime.timedelta(minutes=30)
+        reminders.append({"user": uid, "time": remind_time})
+        await update.message.reply_text("Напоминание установлено на 30 минут позже 🌿")
+
+    elif text == "💎 Премиум":
+        user["premium"] = True
+        await update.message.reply_text("💎 Премиум-режим активирован! (демо-режим)")
+        save_data()
+
+    else:
+        # Обычный вопрос → GPT
+        region = user.get("region", "не указан")
+        answer = await ask_gpt(region, text)
+        await update.message.reply_text(answer)
+
+
+# ==================== ФОНОВАЯ ЗАДАЧА ====================
+async def reminder_checker(application):
     while True:
-        now = datetime.datetime.now()
-        for r in reminders[:]:
-            if now >= r["time"]:
-                await app.bot.send_message(r["user"], "⏰ Пора заняться растениями 🌱")
+        try:
+            now = datetime.datetime.now()
+            to_remove = []
+
+            for r in reminders:
+                if now >= r["time"]:
+                    try:
+                        await application.bot.send_message(
+                            r["user"],
+                            "⏰ Пора заняться растениями! 🌱\nЧто сегодня в плане?"
+                        )
+                    except Exception:
+                        pass  # пользователь мог заблокировать бота
+                    to_remove.append(r)
+
+            for r in to_remove:
                 reminders.remove(r)
+
+        except Exception as e:
+            print("Ошибка в reminder_checker:", e)
+
         await asyncio.sleep(30)
 
-# ====== RUN ======
-load()
 
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.ALL, handler))
-
+# ==================== ЗАПУСК ====================
 async def main():
-    asyncio.create_task(reminder_loop(app))
-    print("🤖 Бот полностью запущен")
-    await app.run_polling()
+    load_data()
+
+    application = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .get_updates_connect_timeout(10)
+        .get_updates_read_timeout(10)
+        .get_updates_write_timeout(10)
+        .build()
+    )
+
+    # Регистрируем обработчики
+    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_handler))
+
+    # Запускаем проверку напоминаний
+    asyncio.create_task(reminder_checker(application))
+
+    print("🤖 Бот успешно стартовал")
+
+    # Запуск polling
+    await application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nБот остановлен пользователем")
+    except Exception as e:
+        print("Критическая ошибка при запуске бота:", e)
 
 
 if __name__ == "__main__":
