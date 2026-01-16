@@ -1,4 +1,4 @@
-print("FORCE REBUILD FINAL")
+print["FORCE REBUILD FINAL"]
 
 import json, datetime, requests, os, asyncio
 from telegram import Update, ReplyKeyboardMarkup
