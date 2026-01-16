@@ -1,8 +1,9 @@
-python-telegram-bot==20.7
-requests
-nest_asyncio
-python-dotenv==1.0.1
-openai
+python-telegram-bot==20.8.*   # или 21.x — лучше брать самую свежую стабильную
+python-dotenv>=1.0.1
+requests>=2.31
+openai>=1.0
+# nest_asyncio — почти никогда не нужен на bothost с v20+
+# но если оставляешь — можно, вреда не будет
 
 
 
