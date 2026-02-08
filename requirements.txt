@@ -1,4 +1,4 @@
-python-telegram-bot==4.25.0
+python-telegram-bot==22.6
 flask==3.0.3
 requests==2.32.3
 yookassa==3.3.0
