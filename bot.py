@@ -224,30 +224,24 @@ def get_week_weather(city):
 async def analyze_plantnet(file_id, region):
     temp_path = "temp_plant.jpg"
     try:
-        # Асинхронно получаем информацию о файле
+        # Асинхронно получаем файл
         file = await application.bot.get_file(file_id)
-        # Асинхронно скачиваем файл
+        # Асинхронно скачиваем
         downloaded_file = await application.bot.download_file(file.file_path)
-        
         with open(temp_path, "wb") as f:
             f.write(downloaded_file)
-        
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
         with open(temp_path, 'rb') as img_file:
             files = {'images': ('photo.jpg', img_file, 'image/jpeg')}
             response = requests.post(url, files=files, params=params, timeout=30)
-        
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        
         if response.status_code != 200:
             return f"Pl@ntNet ошибка {response.status_code}"
-        
         data = response.json()
         if "results" not in data or not data["results"]:
             return "Растение не распознано."
-        
         best = data["results"][0]
         species = best["species"]
         sci_name = species.get("scientificNameWithoutAuthor", "—")
@@ -259,7 +253,6 @@ async def analyze_plantnet(file_id, region):
         prompt = f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
         gpt_advice = ask_yandexgpt(region, prompt)
         return f"Анализ фото:\n{desc}\n\n{gpt_advice}"
-    
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
