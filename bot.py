@@ -876,6 +876,8 @@ def reminders_checker():
 
 # ─── Создание application и handlers ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
+# Инициализация application (обязательно!)
+asyncio.run(application.initialize())
 
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
