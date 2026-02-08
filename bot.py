@@ -221,25 +221,33 @@ def get_week_weather(city):
         return f"Ошибка погоды: {str(e)}"
 
 # ─── PlantNet ───
-def analyze_plantnet(file_id, region):
+async def analyze_plantnet(file_id, region):
     temp_path = "temp_plant.jpg"
     try:
-        file_info = bot.get_file(file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        # Асинхронно получаем информацию о файле
+        file = await application.bot.get_file(file_id)
+        # Асинхронно скачиваем файл
+        downloaded_file = await application.bot.download_file(file.file_path)
+        
         with open(temp_path, "wb") as f:
             f.write(downloaded_file)
+        
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
         with open(temp_path, 'rb') as img_file:
             files = {'images': ('photo.jpg', img_file, 'image/jpeg')}
             response = requests.post(url, files=files, params=params, timeout=30)
+        
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        
         if response.status_code != 200:
             return f"Pl@ntNet ошибка {response.status_code}"
+        
         data = response.json()
         if "results" not in data or not data["results"]:
             return "Растение не распознано."
+        
         best = data["results"][0]
         species = best["species"]
         sci_name = species.get("scientificNameWithoutAuthor", "—")
@@ -251,6 +259,7 @@ def analyze_plantnet(file_id, region):
         prompt = f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
         gpt_advice = ask_yandexgpt(region, prompt)
         return f"Анализ фото:\n{desc}\n\n{gpt_advice}"
+    
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -413,7 +422,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     use_feature(uid, "photos")
     photo = update.message.photo[-1].file_id
-    analysis = analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
+    analysis = await analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
     await update.message.reply_text(analysis, reply_markup=main_keyboard(), parse_mode="Markdown")
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -861,7 +870,7 @@ def reminders_checker():
                             ),
                             asyncio.get_event_loop()
                         )
-                        future.result()  # ждём завершения (опционально, можно убрать если не нужен результат)
+                        future.result()  # ждём завершения (можно убрать, если не нужен результат)
                         mark_reminder_sent(uid_str, rem["id"])
                 except Exception as e:
                     print(f"Ошибка отправки напоминания {uid_str}: {e}")
