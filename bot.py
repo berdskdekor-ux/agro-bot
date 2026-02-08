@@ -376,18 +376,16 @@ def yookassa_webhook():
 
 # ─── Telegram webhook ───
 @flask_app.route('/telegram_webhook', methods=['POST'])
-def telegram_webhook():
+async def telegram_webhook():
     if request.headers.get('content-type') == 'application/json':
-        # Получаем сырые байты
         raw_data = request.get_data()
-        # Декодируем в строку
         json_string = raw_data.decode('utf-8')
-        # Парсим строку в словарь
         update_dict = json.loads(json_string)
-        # Теперь передаём словарь в de_json
         update = Update.de_json(update_dict)
-        # Обрабатываем обновление (теперь синхронно, без await)
-        application.process_update(update)
+        
+        # Самое важное исправление — добавляем await
+        await application.process_update(update)
+        
         return ''
     abort(403)
 
