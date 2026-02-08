@@ -874,7 +874,9 @@ application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 application.add_handler(CallbackQueryHandler(callback_handler))
-
+@flask_app.route('/health', methods=['GET', 'HEAD'])
+def health_check():
+    return 'OK', 200
 # ─── Запуск ───
 if __name__ == "__main__":
     print("🤖 Бот запущен")
