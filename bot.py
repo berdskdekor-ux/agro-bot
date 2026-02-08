@@ -409,7 +409,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     can_use, remaining = can_use_feature(uid, "photos")
     if not can_use:
-        await update.message.reply_text("🚫 Лимит бесплатной диагностики исчерпан (1 раз в сутки).\nХотите без ограничений? Купите Премиум!")
+        await update.message.reply_text("🚫 Лимит бесплатной диагностики исчерпан (2 фото).\nХотите без ограничений? Купите Премиум!")
         return
     use_feature(uid, "photos")
     photo = update.message.photo[-1].file_id
@@ -480,9 +480,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reminders = get_user_reminders(uid)
                 if reminders:
                     delete_reminder(uid, max(r["id"] for r in reminders))
-                await update.message.reply_text("Лимит бесплатных напоминаний исчерпан (1 в сутки).")
+                await update.message.reply_text("Лимит бесплатных напоминаний исчерпан.")
                 return
-            use_feature(uid, "reminders")
+            if not is_premium_active(uid):
+                user["reminders_created"] = user.get("reminders_created", 0) + 1
+                save_data()
             user.pop("state", None)
             user.pop("temp_rem_text", None)
             user.pop("temp_rem_date", None)
@@ -495,7 +497,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
 
-    # Редактирование напоминания
+    # Редактирование значения
     elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
@@ -596,7 +598,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Культуры (пример обработки)
     elif any(word in text_lower for word in [
         "томат", "помидор", "перец", "огурец", "морковь", "картофель", "капуста", "лук", "чеснок",
         "клубника", "малина", "баклажан", "кабачок", "арбуз", "цветы", "яблоня", "груша", "вишня"
@@ -605,9 +606,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         region = user.get("region", "Москва")
         can_use, remaining = can_use_feature(uid, "gpt_queries")
         if not can_use:
-            await update.message.reply_text("🚫 Лимит бесплатных запросов к агроному исчерпан (1 в сутки).")
+            await update.message.reply_text("🚫 Лимит бесплатных запросов к агроному исчерпан (5 шт).")
             return
-        use_feature(uid, "gpt_queries")
+        if not is_premium_active(uid):
+            user["gpt_queries"] = user.get("gpt_queries", 0) + 1
+            save_data()
         prompt = (
             f"Ты — точный агроном-консультант, специализирующийся исключительно на лунных посевных календарях России/СНГ. "
             f"Регион пользователя: {region}. Год — 2026. "
@@ -650,13 +653,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         can_use, remaining = can_use_feature(uid, "gpt_queries")
         if not can_use:
-            await update.message.reply_text("🚫 Лимит бесплатных запросов к агроному исчерпан (1 в сутки).")
+            await update.message.reply_text("🚫 Лимит бесплатных запросов к агроному исчерпан (5 шт).")
             return
-        use_feature(uid, "gpt_queries")
+        if not is_premium_active(uid):
+            user["gpt_queries"] = user.get("gpt_queries", 0) + 1
+            save_data()
         answer = ask_yandexgpt(user.get("region", "Moscow"), text)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
 
-# ─── Callback handler (для всех inline-кнопок) ───
+# ─── Callback handler ───
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -836,6 +841,27 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
+# ─── Фоновые задачи ─── (перемещены сюда — выше вызова)
+def reminders_checker():
+    while True:
+        now = datetime.now()
+        for uid_str, user in list(user_data.items()):
+            reminders = user.get("reminders", [])
+            for rem in reminders:
+                if rem.get("sent"):
+                    continue
+                try:
+                    rem_time = datetime.fromisoformat(rem["datetime"])
+                    if rem_time <= now:
+                        asyncio.run_coroutine_threadsafe(
+                            application.bot.send_message(int(uid_str), f"🔔 Напоминание!\n{rem['text']}"),
+                            asyncio.get_event_loop()
+                        )
+                        mark_reminder_sent(uid_str, rem["id"])
+                except:
+                    pass
+        time.sleep(60)
+
 # ─── Создание application и handlers ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -848,7 +874,7 @@ application.add_handler(CallbackQueryHandler(callback_handler))
 if __name__ == "__main__":
     print("🤖 Бот запущен")
 
-    # Фоновые задачи
+    # Фоновые задачи (теперь функции уже определены выше)
     threading.Thread(target=reminders_checker, daemon=True).start()
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
 
