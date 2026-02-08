@@ -841,7 +841,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
-# ─── Фоновые задачи ─── (перемещены сюда — выше вызова)
+# ==================== ФОНОВАЯ ПРОВЕРКА НАПОМИНАНИЙ ====================
 def reminders_checker():
     while True:
         now = datetime.now()
@@ -853,13 +853,18 @@ def reminders_checker():
                 try:
                     rem_time = datetime.fromisoformat(rem["datetime"])
                     if rem_time <= now:
-                        asyncio.run_coroutine_threadsafe(
-                            application.bot.send_message(int(uid_str), f"🔔 Напоминание!\n{rem['text']}"),
+                        # Правильный способ отправить сообщение из другого потока
+                        future = asyncio.run_coroutine_threadsafe(
+                            application.bot.send_message(
+                                chat_id=int(uid_str),
+                                text=f"🔔 Напоминание!\n{rem['text']}"
+                            ),
                             asyncio.get_event_loop()
                         )
+                        future.result()  # ждём завершения (опционально, можно убрать если не нужен результат)
                         mark_reminder_sent(uid_str, rem["id"])
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Ошибка отправки напоминания {uid_str}: {e}")
         time.sleep(60)
 
 # ─── Создание application и handlers ───
