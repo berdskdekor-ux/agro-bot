@@ -374,23 +374,21 @@ async def telegram_webhook():
     try:
         update_dict = request.get_json(force=True)
     except:
-        print("Невалидный JSON от Telegram")
+        print("Невалидный JSON")
         return '', 200
 
-    if not application.bot:
-        print("!!! BOT НЕ ГОТОВ на момент запроса !!! Игнорируем обновление.")
+    # Защита: если не инициализировано — пропускаем (Telegram попробует позже)
+    try:
+        application._check_initialized()  # Это кинет RuntimeError, если не готов
+    except RuntimeError:
+        print("Application ещё не инициализирован → пропускаем обновление")
         return '', 200
 
     try:
         update = Update.de_json(update_dict, application.bot)
         await application.process_update(update)
-    except RuntimeError as e:
-        if "не связан ни один бот" in str(e):
-            print("RuntimeError: бот ещё не привязан → пропускаем")
-        else:
-            print(f"Ошибка process_update: {e}")
     except Exception as e:
-        print(f"Неожиданная ошибка в webhook: {e}")
+        print(f"Ошибка process_update: {e}")
 
     return '', 200
 
@@ -873,18 +871,28 @@ def run_startup():
 def health_check():
     return 'OK', 200
 
-# ─── Запуск ───
+# Глобальный loop
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+async def startup():
+    await application.initialize()
+    await application.start()
+    print("Telegram Application успешно инициализирован и запущен")
+
 if __name__ == "__main__":
     print("🤖 Бот запущен")
 
-    # Для локального запуска (Render будет использовать gunicorn)
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--local":
-        # Локально — Flask dev server
-        print(f"Локальный режим на порту {PORT or 5000}")
-        flask_app.run(host="0.0.0.0", port=PORT or 5000, debug=True)
-    else:
-        # На Render — ничего не запускаем здесь, gunicorn сам подхватит flask_app
-        print("Ожидание gunicorn...")
-        import time
-        time.sleep(999999)  # бесконечный сон — gunicorn заменит этот процесс
+    # Запускаем инициализацию **синхронно** (блокирует до завершения)
+    loop.run_until_complete(startup())
+
+    # Теперь приложение готово — запускаем фоновые задачи
+    threading.Thread(target=reminders_checker, daemon=True).start()
+    threading.Thread(target=premium_expiration_checker, daemon=True).start()
+
+    # Gunicorn сам подхватит flask_app, здесь ничего не нужно
+    # (на Render Start Command уже gunicorn, так что этот блок просто для локального запуска)
+    print("Готов к работе. Ожидание входящих обновлений...")
+    import time
+    while True:
+        time.sleep(3600)
