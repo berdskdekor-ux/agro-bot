@@ -54,6 +54,29 @@ from flask import Flask, request, abort
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
+# ────────────────────────────────────────────────
+# !!! Самая важная часть — ИНИЦИАЛИЗАЦИЯ ПРЯМО СЕЙЧАС !!!
+# ────────────────────────────────────────────────
+
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# Блокируем выполнение до полной готовности приложения
+loop = asyncio.get_event_loop()
+loop.run_until_complete(application.initialize())
+loop.run_until_complete(application.start())
+
+print("Telegram Application успешно инициализирован и запущен")
+
+# Теперь можно безопасно добавлять handlers
+application.add_handler(CommandHandler("start", cmd_start))
+application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+application.add_handler(CallbackQueryHandler(callback_handler))
+
+# ────────────────────────────────────────────────
+# Дальше идёт Flask и всё остальное
+# ────────────────────────────────────────────────
+
 flask_app = Flask(__name__)
 DATA_FILE = "data.json"
 user_data = {}
@@ -886,12 +909,6 @@ if __name__ == "__main__":
     # Запускаем инициализацию **синхронно** (блокирует до завершения)
     loop.run_until_complete(startup())
 
-    # Теперь приложение готово — запускаем фоновые задачи
-    threading.Thread(target=reminders_checker, daemon=True).start()
-    threading.Thread(target=premium_expiration_checker, daemon=True).start()
-
-    # Gunicorn сам подхватит flask_app, здесь ничего не нужно
-    # (на Render Start Command уже gunicorn, так что этот блок просто для локального запуска)
     print("Готов к работе. Ожидание входящих обновлений...")
     import time
     while True:
