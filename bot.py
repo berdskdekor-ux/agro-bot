@@ -5,7 +5,6 @@ import threading
 import uuid
 from datetime import datetime, timedelta, date
 import asyncio
-
 from dotenv import load_dotenv
 
 load_dotenv()  # для локального запуска; на Render не требуется
@@ -18,7 +17,7 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")          # https://твой-домен.onrender.com/telegram_webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://твой-домен.onrender.com/telegram_webhook
 PORT = int(os.getenv("PORT", "8443"))
 
 required = {
@@ -56,7 +55,6 @@ Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 flask_app = Flask(__name__)
-
 DATA_FILE = "data.json"
 user_data = {}
 
@@ -104,23 +102,18 @@ def can_use_feature(uid: str, feature: str) -> tuple[bool, int]:
     user = user_data.setdefault(uid, {})
     if is_premium_active(uid):
         return True, 999
-
     today = date.today().isoformat()
     key_last = f"{feature}_last_date"
     key_count = f"{feature}_count"
-
     last_date = user.get(key_last)
     count = user.get(key_count, 0)
-
     if last_date != today:
         count = 0
         user[key_last] = today
         user[key_count] = 0
-
     max_count = FREE_LIMITS.get(feature, 999)
     if count >= max_count:
         return False, 0
-
     remaining = max_count - count - 1
     return True, max(0, remaining)
 
@@ -168,7 +161,7 @@ def premium_expiration_checker():
                                     "Лимиты вернулись к бесплатным значениям.\n"
                                     "Чтобы продлить — нажмите кнопку «💎 Премиум»"
                                 ),
-                                asyncio.get_event_loop()
+                                loop
                             )
                     except:
                         user["premium"] = False
@@ -222,11 +215,9 @@ def get_week_weather(city):
 
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
-    temp_path = "temp_plant.jpg"
+    temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
-        # Асинхронно получаем файл
         file = await application.bot.get_file(file_id)
-        # Асинхронно скачиваем
         downloaded_file = await application.bot.download_file(file.file_path)
         with open(temp_path, "wb") as f:
             f.write(downloaded_file)
@@ -367,7 +358,7 @@ def yookassa_webhook():
                         parse_mode="Markdown",
                         reply_markup=main_keyboard()
                     ),
-                    asyncio.get_event_loop()
+                    loop
                 )
         return '', 200
     except Exception as e:
@@ -381,16 +372,12 @@ async def telegram_webhook():
         raw_data = request.get_data()
         json_string = raw_data.decode('utf-8')
         update_dict = json.loads(json_string)
-        update = Update.de_json(update_dict)
-        
-        # Самое важное исправление — добавляем await
+        update = Update.de_json(update_dict, application.bot)
         await application.process_update(update)
-        
-        return ''
+        return '', 200
     abort(403)
 
 # ─── Handlers ───
-
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -432,7 +419,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = user_data[uid]
     state = user.get("state")
 
-    # Ожидание региона
     if state == STATE_WAIT_REGION:
         region = text.strip()
         if len(region) < 3:
@@ -448,7 +434,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Добавление нового напоминания
     if state == STATE_ADD_REM_TEXT:
         if not text.strip():
             await update.message.reply_text("Текст не может быть пустым.")
@@ -458,7 +443,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Укажите дату: дд.мм.гггг\nПример: 15.03.2026")
         save_data()
         return
-
     elif state == STATE_ADD_REM_DATE:
         try:
             d, m, y = map(int, text.replace(" ", "").split("."))
@@ -473,7 +457,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
-
     elif state == STATE_ADD_REM_TIME:
         try:
             h, mm = map(int, text.replace(" ", "").split(":"))
@@ -504,7 +487,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
 
-    # Редактирование значения
     elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
@@ -543,21 +525,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data()
         return
 
-    # Основная обработка текстовых команд
     text_lower = text.lower()
     if text == "🌦 Погода":
         answer = get_week_weather(user.get("region", "Moscow"))
         await update.message.reply_text(answer, reply_markup=main_keyboard())
         return
-
     elif text == "📸 Диагностика":
         await update.message.reply_text("Пришли фото растения крупным планом (лист, цветок, плод, стебель или повреждения).")
         return
-
     elif text == "⏰ Напоминание":
         await update.message.reply_text("Выбери действие:", reply_markup=reminder_inline_keyboard())
         return
-
     elif text == "💎 Премиум":
         await update.message.reply_text(
             "💎 <b>Premium-доступ</b>\n\nЧто даёт:\n• Без ограничений\n• Приоритетные ответы\n• Поддержка проекта\n\nВыбери тариф:",
@@ -565,7 +543,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=premium_inline_keyboard()
         )
         return
-
     elif text == "📅 Календарь посадок":
         calendar_text = """🌙 **Лунный посевной календарь на 2026 год**
 Общие правила:
@@ -604,7 +581,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
-
     elif any(word in text_lower for word in [
         "томат", "помидор", "перец", "огурец", "морковь", "картофель", "капуста", "лук", "чеснок",
         "клубника", "малина", "баклажан", "кабачок", "арбуз", "цветы", "яблоня", "груша", "вишня"
@@ -631,7 +607,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answer = f"Для **{culture_clean}** в 2026 году точные даты зависят от сорта и региона. Уточни!"
         await update.message.reply_text(answer, reply_markup=main_keyboard())
         return
-
     elif any(kw in text_lower for kw in ["лунный", "календарь посадок", "лунный календарь"]):
         answer = (
             "Вот краткий лунный календарь на 2026 год (самые благоприятные дни):\n\n"
@@ -642,7 +617,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(answer, reply_markup=main_keyboard())
         return
-
     elif "что я умею" in text_lower or "умеешь" in text_lower:
         answer = (
             "Я умею:\n"
@@ -656,7 +630,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(answer, reply_markup=main_keyboard())
         return
-
     else:
         can_use, remaining = can_use_feature(uid, "gpt_queries")
         if not can_use:
@@ -685,7 +658,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("← Отмена", callback_data="rem_cancel")
             ])
         )
-
     elif data == "rem_list":
         reminders = get_user_reminders(uid)
         if not reminders:
@@ -704,7 +676,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("← Назад", callback_data="rem_back")
         ])
         await query.edit_message_text(text or "Список пуст", reply_markup=markup)
-
     elif data == "rem_edit_menu":
         reminders = get_user_reminders(uid)
         if not reminders:
@@ -721,7 +692,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("← Назад", callback_data="rem_back")])
         markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("Выберите напоминание:", reply_markup=markup)
-
     elif data.startswith("edit_rem_") and not data.startswith(("edit_text_", "edit_date_", "edit_time_")):
         try:
             rem_id = int(data.split("_")[-1])
@@ -746,7 +716,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Что хотите изменить?"
         )
         await query.edit_message_text(text, reply_markup=edit_reminder_actions_markup(rem_id))
-
     elif data.startswith(("edit_text_", "edit_date_", "edit_time_")):
         parts = data.split("_")
         field = parts[1]
@@ -769,7 +738,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
         user["state"] = STATE_EDIT_REM_VALUE
-
     elif data.startswith("del_rem_"):
         try:
             rem_id = int(data.split("_")[-1])
@@ -778,7 +746,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if delete_reminder(uid, rem_id):
             await query.answer("Напоминание удалено ✓", show_alert=True)
-            # Обновляем список
             reminders = get_user_reminders(uid)
             if not reminders:
                 text = "У вас пока нет напоминаний."
@@ -798,7 +765,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text or "Список пуст", reply_markup=markup)
         else:
             await query.answer("Не удалось удалить", show_alert=True)
-
     elif data in ("rem_cancel", "rem_cancel_edit", "rem_back"):
         for key in ["state", "temp_rem_id", "edit_field", "temp_rem_text", "temp_rem_date"]:
             user.pop(key, None)
@@ -807,7 +773,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Меню напоминаний",
             reply_markup=reminder_inline_keyboard()
         )
-
     elif data.startswith("premium_"):
         plan = data.split("_")[1]
         plans = {
@@ -848,7 +813,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
-# ==================== ФОНОВАЯ ПРОВЕРКА НАПОМИНАНИЙ ====================
+# ─── Фоновая проверка напоминаний ───
 def reminders_checker():
     while True:
         now = datetime.now()
@@ -860,46 +825,48 @@ def reminders_checker():
                 try:
                     rem_time = datetime.fromisoformat(rem["datetime"])
                     if rem_time <= now:
-                        # Правильный способ отправить сообщение из другого потока
-                        future = asyncio.run_coroutine_threadsafe(
+                        asyncio.run_coroutine_threadsafe(
                             application.bot.send_message(
                                 chat_id=int(uid_str),
                                 text=f"🔔 Напоминание!\n{rem['text']}"
                             ),
-                            asyncio.get_event_loop()
+                            loop
                         )
-                        future.result()  # ждём завершения (можно убрать, если не нужен результат)
                         mark_reminder_sent(uid_str, rem["id"])
                 except Exception as e:
                     print(f"Ошибка отправки напоминания {uid_str}: {e}")
         time.sleep(60)
 
-# ─── Создание application и handlers ───
+# ─── Создание application ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
-# Инициализация application (обязательно!)
-asyncio.run(application.initialize())
 
-application.add_handler(CommandHandler("start", cmd_start))
-application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-application.add_handler(CallbackQueryHandler(callback_handler))
+# Глобальный event loop
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+async def startup():
+    await application.initialize()
+    await application.start()
+    print("Telegram Application успешно инициализирован и запущен")
+
+def run_startup():
+    loop.run_until_complete(startup())
+
 @flask_app.route('/health', methods=['GET', 'HEAD'])
 def health_check():
     return 'OK', 200
+
 # ─── Запуск ───
 if __name__ == "__main__":
     print("🤖 Бот запущен")
-
-    # Фоновые задачи (теперь функции уже определены выше)
+    threading.Thread(target=run_startup, daemon=True).start()
     threading.Thread(target=reminders_checker, daemon=True).start()
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
 
-    # Flask webhook
     def run_flask():
-        flask_app.run(host="0.0.0.0", port=PORT, debug=False)
+        flask_app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # Держим процесс живым
     while True:
         time.sleep(3600)
