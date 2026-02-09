@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # для локального запуска; на Render не требуется
 
-# ─── Переменные окружения (обязательно задай в Render → Environment) ───
+# ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
@@ -17,8 +17,7 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://твой-домен.onrender.com/telegram_webhook
-PORT = int(os.getenv("PORT", "8443"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 required = {
     "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
@@ -34,18 +33,9 @@ missing = [k for k, v in required.items() if not v]
 if missing:
     raise ValueError(f"Отсутствуют обязательные переменные: {', '.join(missing)}")
 
-# ─── Импорты telegram ───
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes,
-)
-
-# ─── Остальные импорты ───
+# ─── Импорты ───
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
@@ -54,41 +44,18 @@ from flask import Flask, request, abort
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
-# ────────────────────────────────────────────────
-# !!! Самая важная часть — ИНИЦИАЛИЗАЦИЯ ПРЯМО СЕЙЧАС !!!
-# ────────────────────────────────────────────────
-
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# Блокируем выполнение до полной готовности приложения
-loop = asyncio.get_event_loop()
-loop.run_until_complete(application.initialize())
-loop.run_until_complete(application.start())
-
-print("Telegram Application успешно инициализирован и запущен")
-
-# Теперь можно безопасно добавлять handlers
-application.add_handler(CommandHandler("start", cmd_start))
-application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-application.add_handler(CallbackQueryHandler(callback_handler))
-
-# ────────────────────────────────────────────────
-# Дальше идёт Flask и всё остальное
-# ────────────────────────────────────────────────
-
 flask_app = Flask(__name__)
+
+# ─── ДАННЫЕ И ЛИМИТЫ ───
 DATA_FILE = "data.json"
 user_data = {}
 
-# Лимиты для бесплатных пользователей — 1 раз в сутки по каждой функции
 FREE_LIMITS = {
     "photos": 2,
     "reminders": 1,
     "gpt_queries": 5
 }
 
-# Состояния
 STATE_WAIT_REGION = "wait_region"
 STATE_ADD_REM_TEXT = "add_rem_text"
 STATE_ADD_REM_DATE = "add_rem_date"
@@ -120,7 +87,7 @@ def save_data():
 
 load_data()
 
-# ─── Проверка лимитов (1 раз в сутки) ───
+# ─── Проверка лимитов ───
 def can_use_feature(uid: str, feature: str) -> tuple[bool, int]:
     user = user_data.setdefault(uid, {})
     if is_premium_active(uid):
@@ -393,18 +360,20 @@ def yookassa_webhook():
 async def telegram_webhook():
     if request.headers.get('content-type') != 'application/json':
         abort(403)
-
     try:
         update_dict = request.get_json(force=True)
     except:
         print("Невалидный JSON")
         return '', 200
 
-    # Защита: если не инициализировано — пропускаем (Telegram попробует позже)
+    if not hasattr(application, 'bot') or application.bot is None:
+        print("Бот ещё не готов → пропускаем")
+        return '', 200
+
     try:
-        application._check_initialized()  # Это кинет RuntimeError, если не готов
-    except RuntimeError:
-        print("Application ещё не инициализирован → пропускаем обновление")
+        application._check_initialized()
+    except RuntimeError as e:
+        print(f"Application не готов: {e}")
         return '', 200
 
     try:
@@ -415,7 +384,8 @@ async def telegram_webhook():
 
     return '', 200
 
-# ─── Handlers ───
+# ─── Handlers ─── (все функции определены здесь)
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -524,7 +494,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
-
     elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
@@ -851,6 +820,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
+# ─── Добавляем handlers после определения всех функций ───
+application.add_handler(CommandHandler("start", cmd_start))
+application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+application.add_handler(CallbackQueryHandler(callback_handler))
+
 # ─── Фоновая проверка напоминаний ───
 def reminders_checker():
     while True:
@@ -875,41 +850,14 @@ def reminders_checker():
                     print(f"Ошибка отправки напоминания {uid_str}: {e}")
         time.sleep(60)
 
-# ─── Создание application ───
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# Глобальный event loop
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-async def startup():
-    await application.initialize()
-    await application.start()
-    print("Telegram Application успешно инициализирован и запущен")
-
-def run_startup():
-    loop.run_until_complete(startup())
-
+# ─── Flask health ───
 @flask_app.route('/health', methods=['GET', 'HEAD'])
 def health_check():
     return 'OK', 200
 
-# Глобальный loop
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-async def startup():
-    await application.initialize()
-    await application.start()
-    print("Telegram Application успешно инициализирован и запущен")
-
+# ─── Локальный запуск (для тестирования на компьютере) ───
 if __name__ == "__main__":
-    print("🤖 Бот запущен")
-
-    # Запускаем инициализацию **синхронно** (блокирует до завершения)
-    loop.run_until_complete(startup())
-
-    print("Готов к работе. Ожидание входящих обновлений...")
-    import time
-    while True:
-        time.sleep(3600)
+    print("Локальный запуск (на Render используется gunicorn)")
+    threading.Thread(target=reminders_checker, daemon=True).start()
+    threading.Thread(target=premium_expiration_checker, daemon=True).start()
+    flask_app.run(host="0.0.0.0", port=PORT, debug=False)
