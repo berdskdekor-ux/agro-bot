@@ -869,3 +869,24 @@ if __name__ == "__main__":
     threading.Thread(target=reminders_checker, daemon=True).start()
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
     flask_app.run(host="0.0.0.0", port=PORT or 8080, debug=False)
+# ─── Добавьте это в самый конец файла, после всех определений ───
+
+import signal
+
+async def shutdown():
+    print("Остановка Telegram Application...")
+    await application.stop()
+    await application.shutdown()
+    print("Telegram Application остановлен")
+
+def handle_shutdown(signum, frame):
+    print(f"Получен сигнал {signum}, останавливаем приложение...")
+    loop.run_until_complete(shutdown())
+    # Если нужно — можно sys.exit(0), но gunicorn сам завершится
+
+# Регистрируем обработчики сигналов (TERM, INT — стандарт для gunicorn)
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
+
+# Если хотите — добавьте в конец файла (после if __name__):
+print("Приложение готово к работе. Ожидание запросов...")
