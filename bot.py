@@ -368,14 +368,31 @@ def yookassa_webhook():
 # ─── Telegram webhook ───
 @flask_app.route('/telegram_webhook', methods=['POST'])
 async def telegram_webhook():
-    if request.headers.get('content-type') == 'application/json':
-        raw_data = request.get_data()
-        json_string = raw_data.decode('utf-8')
-        update_dict = json.loads(json_string)
+    if request.headers.get('content-type') != 'application/json':
+        abort(403)
+
+    try:
+        update_dict = request.get_json(force=True)
+    except:
+        print("Невалидный JSON от Telegram")
+        return '', 200
+
+    if not application.bot:
+        print("!!! BOT НЕ ГОТОВ на момент запроса !!! Игнорируем обновление.")
+        return '', 200
+
+    try:
         update = Update.de_json(update_dict, application.bot)
         await application.process_update(update)
-        return '', 200
-    abort(403)
+    except RuntimeError as e:
+        if "не связан ни один бот" in str(e):
+            print("RuntimeError: бот ещё не привязан → пропускаем")
+        else:
+            print(f"Ошибка process_update: {e}")
+    except Exception as e:
+        print(f"Неожиданная ошибка в webhook: {e}")
+
+    return '', 200
 
 # ─── Handlers ───
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -859,14 +876,15 @@ def health_check():
 # ─── Запуск ───
 if __name__ == "__main__":
     print("🤖 Бот запущен")
-    threading.Thread(target=run_startup, daemon=True).start()
-    threading.Thread(target=reminders_checker, daemon=True).start()
-    threading.Thread(target=premium_expiration_checker, daemon=True).start()
 
-    def run_flask():
-        flask_app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
-
-    threading.Thread(target=run_flask, daemon=True).start()
-
-    while True:
-        time.sleep(3600)
+    # Для локального запуска (Render будет использовать gunicorn)
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--local":
+        # Локально — Flask dev server
+        print(f"Локальный режим на порту {PORT or 5000}")
+        flask_app.run(host="0.0.0.0", port=PORT or 5000, debug=True)
+    else:
+        # На Render — ничего не запускаем здесь, gunicorn сам подхватит flask_app
+        print("Ожидание gunicorn...")
+        import time
+        time.sleep(999999)  # бесконечный сон — gunicorn заменит этот процесс
