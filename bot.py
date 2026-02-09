@@ -46,7 +46,15 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 flask_app = Flask(__name__)
 
-# ─── ДАННЫЕ И ЛИМИТЫ ───
+# ─── СОЗДАЁМ И ИНИЦИАЛИЗИРУЕМ APPLICATION СРАЗУ ───
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(application.initialize())
+loop.run_until_complete(application.start())
+print("Telegram Application успешно инициализирован и запущен")
+
+# ─── ДАННЫЕ ───
 DATA_FILE = "data.json"
 user_data = {}
 
@@ -366,6 +374,7 @@ async def telegram_webhook():
         print("Невалидный JSON")
         return '', 200
 
+    # Защита
     if not hasattr(application, 'bot') or application.bot is None:
         print("Бот ещё не готов → пропускаем")
         return '', 200
@@ -384,8 +393,7 @@ async def telegram_webhook():
 
     return '', 200
 
-# ─── Handlers ─── (все функции определены здесь)
-
+# ─── Handlers ───
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -820,13 +828,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
-# ─── Добавляем handlers после определения всех функций ───
+# ─── Добавляем handlers (после определения всех функций) ───
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 application.add_handler(CallbackQueryHandler(callback_handler))
 
-# ─── Фоновая проверка напоминаний ───
+# ─── Фоновые задачи ───
 def reminders_checker():
     while True:
         now = datetime.now()
@@ -850,14 +858,14 @@ def reminders_checker():
                     print(f"Ошибка отправки напоминания {uid_str}: {e}")
         time.sleep(60)
 
-# ─── Flask health ───
+# ─── Health check ───
 @flask_app.route('/health', methods=['GET', 'HEAD'])
 def health_check():
     return 'OK', 200
 
-# ─── Локальный запуск (для тестирования на компьютере) ───
+# ─── Локальный запуск (для теста на компьютере) ───
 if __name__ == "__main__":
-    print("Локальный запуск (на Render используется gunicorn)")
+    print("Локальный запуск — используйте gunicorn на Render")
     threading.Thread(target=reminders_checker, daemon=True).start()
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
-    flask_app.run(host="0.0.0.0", port=PORT, debug=False)
+    flask_app.run(host="0.0.0.0", port=PORT or 8080, debug=False)
