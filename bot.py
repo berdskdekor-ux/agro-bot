@@ -768,62 +768,61 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reminder_inline_keyboard()
         )
     elif data.startswith("premium_"):
-    plan = data.split("_")[1]
-    
-    # ─── ДЕБАГ ───
-    print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
-    await query.answer(f"[ТЕСТ] Пытаемся создать платёж для {plan}...", show_alert=True)  # временный видимый алерт
-    
-    plans = {
-        "day": {"amount": "10.00", "desc": "Премиум на 1 день"},
-        "week": {"amount": "50.00", "desc": "Премиум на 7 дней"},
-        "month": {"amount": "150.00", "desc": "Премиум на 30 дней"},
-        "year": {"amount": "1500.00", "desc": "Премиум на 365 дней"},
-    }
-    
-    if plan not in plans:
-        print(f"[DEBUG-PREMIUM] Неизвестный план: {plan}")
-        await query.answer("Неизвестный тариф", show_alert=True)
-        return
-    
-    p = plans[plan]
-    
-    try:
-        print(f"[DEBUG-PREMIUM] Создаём платёж: {p['amount']} RUB, описание: {p['desc']}")
+        plan = data.split("_")[1]  # ← здесь отступ 8 пробелов (или 2 таба), если выше функция с 4
         
-        idempotency_key = str(uuid.uuid4())
-        payment = Payment.create({
-            "amount": {
-                "value": p["amount"],
-                "currency": "RUB"
-            },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": "https://agro-bot-uxva.onrender.com/success"  # временно упростили
-            },
-            "capture": True,
-            "description": p["desc"],
-            "metadata": {
-                "user_id": uid,
-                "plan": plan
-            }
-        }, idempotency_key)
+        # ДЕБАГ
+        print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
+        await query.answer(f"[ТЕСТ] Пытаемся создать платёж для {plan}...", show_alert=True)
         
-        payment_url = payment.confirmation.confirmation_url
-        print(f"[DEBUG-PREMIUM] Ссылка получена: {payment_url}")
+        plans = {
+            "day": {"amount": "10.00", "desc": "Премиум на 1 день"},
+            "week": {"amount": "50.00", "desc": "Премиум на 7 дней"},
+            "month": {"amount": "150.00", "desc": "Премиум на 30 дней"},
+            "year": {"amount": "1500.00", "desc": "Премиум на 365 дней"},
+        }
         
-        await query.message.reply_text(
-            f"Для активации премиум перейдите по ссылке:\n\n"
-            f"{payment_url}\n\n"
-            f"После успешной оплаты премиум активируется **автоматически**."
-        )
-        await query.answer("Ссылка на оплату создана")
-    except Exception as e:
-        print(f"[ERROR-PREMIUM] Ошибка при создании платежа: {str(e)}")
-        import traceback
-        print(traceback.format_exc())  # полный стек-трейс в лог
-        await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
-
+        if plan not in plans:
+            print(f"[DEBUG-PREMIUM] Неизвестный план: {plan}")
+            await query.answer("Неизвестный тариф", show_alert=True)
+            return
+        
+        p = plans[plan]
+        
+        try:
+            print(f"[DEBUG-PREMIUM] Создаём платёж: {p['amount']} RUB, описание: {p['desc']}")
+            
+            idempotency_key = str(uuid.uuid4())
+            payment = Payment.create({
+                "amount": {
+                    "value": p["amount"],
+                    "currency": "RUB"
+                },
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": "https://agro-bot-uxva.onrender.com/success"  # упрощённый
+                },
+                "capture": True,
+                "description": p["desc"],
+                "metadata": {
+                    "user_id": uid,
+                    "plan": plan
+                }
+            }, idempotency_key)
+            
+            payment_url = payment.confirmation.confirmation_url
+            print(f"[DEBUG-PREMIUM] Ссылка получена: {payment_url}")
+            
+            await query.message.reply_text(
+                f"Для активации премиум перейдите по ссылке:\n\n"
+                f"{payment_url}\n\n"
+                f"После успешной оплаты премиум активируется автоматически."
+            )
+            await query.answer("Ссылка на оплату создана")
+        except Exception as e:
+            print(f"[ERROR-PREMIUM] Ошибка при создании платежа: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 # ─── Добавляем handlers ───
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
