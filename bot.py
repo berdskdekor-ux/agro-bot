@@ -1,3 +1,5 @@
+# bot.py (или main.py) — полный код под FastAPI / ASGI
+
 import os
 import json
 import time
@@ -6,12 +8,13 @@ import uuid
 from datetime import datetime, timedelta, date
 import asyncio
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
-from flask import Flask, request, abort
 
 # ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -35,14 +38,13 @@ missing = [k for k, v in required.items() if not v]
 if missing:
     raise ValueError(f"Отсутствуют обязательные переменные: {', '.join(missing)}")
 
-PORT = int(os.environ.get("PORT", 10000))
-
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
-flask_app = Flask(__name__)
+# ─── FastAPI приложение ───
+app = FastAPI(title="Агроном-бот", description="Telegram бот для садоводов и огородников")
 
-# ─── Создаём Application ───
+# ─── Telegram Application ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # ─── ДАННЫЕ ───
@@ -319,10 +321,10 @@ def culture_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # ─── YooKassa webhook ───
-@flask_app.route('/yookassa-webhook', methods=['POST'])
-def yookassa_webhook():
+@app.post("/yookassa-webhook")
+async def yookassa_webhook(request: Request):
     try:
-        event = request.get_json()
+        event = await request.json()
         notification = WebhookNotification(event)
         if notification.event == "payment.succeeded":
             payment = notification.object
@@ -338,61 +340,38 @@ def yookassa_webhook():
                 user["premium"] = True
                 user["premium_until"] = until.isoformat()
                 save_data()
-                asyncio.run_coroutine_threadsafe(
-                    application.bot.send_message(
-                        int(uid),
-                        f"✅ Оплата прошла успешно!\nПремиум до **{until.strftime('%d.%m.%Y %H:%M')}**!\nСпасибо 🌱",
-                        parse_mode="Markdown",
-                        reply_markup=main_keyboard()
-                    ),
-                    asyncio.get_event_loop()
+                await application.bot.send_message(
+                    int(uid),
+                    f"✅ Оплата прошла успешно!\nПремиум до **{until.strftime('%d.%m.%Y %H:%M')}**!\nСпасибо 🌱",
+                    parse_mode="Markdown",
+                    reply_markup=main_keyboard()
                 )
-        return '', 200
+        return PlainTextResponse("", status_code=200)
     except Exception as e:
         print(f"Webhook error: {e}")
-        return '', 200
+        return PlainTextResponse("", status_code=200)
 
 # ─── Telegram webhook ───
-@flask_app.route('/telegram_webhook', methods=['POST'])
-def telegram_webhook():
-    if request.headers.get('content-type') != 'application/json':
-        abort(403)
+@app.post("/telegram_webhook")
+async def telegram_webhook(request: Request):
+    if request.headers.get("content-type") != "application/json":
+        raise HTTPException(status_code=403)
     try:
-        update_dict = request.get_json(force=True)
-    except:
-        print("Невалидный JSON")
-        return '', 200
-
-    if not hasattr(application, 'bot') or application.bot is None:
-        print("Бот ещё не готов → пропускаем")
-        return '', 200
-
-    try:
+        update_dict = await request.json()
         update = Update.de_json(update_dict, application.bot)
-        asyncio.create_task(application.process_update(update))
+        await application.process_update(update)
+        return {}
     except Exception as e:
         print(f"Ошибка process_update: {e}")
-    return '', 200
-
-# ─── Установка webhook ───
-@flask_app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    try:
-        domain = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-        if not domain:
-            return "Нет RENDER_EXTERNAL_HOSTNAME", 500
-        webhook_url = f"https://{domain}/telegram_webhook"
-        application.bot.set_webhook(url=webhook_url)
-        return f"Webhook установлен: {webhook_url}", 200
-    except Exception as e:
-        return f"Ошибка: {str(e)}", 500
+        return {}
 
 # ─── Health check ───
-@flask_app.route('/health', methods=['GET', 'HEAD'])
-def health_check():
-    return 'OK', 200
+@app.get("/health")
+async def health_check():
+    return {"status": "OK"}
 
-# ─── Handlers ───
+# ─── Handlers ─── (все твои обработчики остаются без изменений)
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -667,8 +646,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user.pop("temp_rem_id", None)
         await query.edit_message_text(
             "Напишите текст напоминания:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("← Отмена", callback_data="rem_cancel")]
+            reply_markup=InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton("← Отмена", callback_data="rem_cancel")
             ])
         )
         save_data()
@@ -686,8 +665,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     lines.append(f"#{r['id']} | (ошибка даты) | {r['text'][:40]}...")
             text = "\n".join(lines)
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("← Назад", callback_data="rem_back")]
+        markup = InlineKeyboardMarkup.from_column([
+            InlineKeyboardButton("← Назад", callback_data="rem_back")
         ])
         await query.edit_message_text(text or "Список пуст", reply_markup=markup)
     elif data == "rem_edit_menu":
@@ -723,13 +702,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dt_str = dt.strftime('%d.%m.%Y %H:%M')
         except:
             dt_str = "(ошибка формата даты)"
-        text_msg = (
+        text = (
             f"Напоминание #{rem_id}\n"
             f"Текст: {reminder['text']}\n"
             f"Дата и время: {dt_str}\n\n"
             "Что хотите изменить?"
         )
-        await query.edit_message_text(text_msg, reply_markup=edit_reminder_actions_markup(rem_id))
+        await query.edit_message_text(text, reply_markup=edit_reminder_actions_markup(rem_id))
     elif data.startswith(("edit_text_", "edit_date_", "edit_time_")):
         parts = data.split("_")
         field = parts[1]
@@ -747,8 +726,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await query.edit_message_text(
             prompts.get(field, "Ошибка поля"),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("← Отмена", callback_data="rem_cancel_edit")]
+            reply_markup=InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton("← Отмена", callback_data="rem_cancel_edit")
             ])
         )
         user["state"] = STATE_EDIT_REM_VALUE
@@ -774,8 +753,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         lines.append(f"#{r['id']} | (ошибка даты) | {r['text'][:40]}...")
                 text = "\n".join(lines)
-            markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("← Назад", callback_data="rem_back")]
+            markup = InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton("← Назад", callback_data="rem_back")
             ])
             await query.edit_message_text(text or "Список пуст", reply_markup=markup)
         else:
@@ -834,7 +813,7 @@ application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 application.add_handler(CallbackQueryHandler(callback_handler))
 
-# ─── Фоновые проверки ───
+# ─── Фоновые задачи ───
 def reminders_checker():
     while True:
         now = datetime.now()
@@ -858,24 +837,35 @@ def reminders_checker():
                     print(f"Ошибка отправки напоминания {uid_str}: {e}")
         time.sleep(60)
 
-# Запускаем потоки один раз
-threading.Thread(target=reminders_checker, daemon=True).start()
-threading.Thread(target=premium_expiration_checker, daemon=True).start()
+# ─── Lifespan (startup / shutdown) ───
+@app.on_event("startup")
+async def startup_event():
+    print("Starting Telegram Application...")
+    await application.initialize()
+    await application.start()
 
-# ─── Graceful shutdown ───
-import signal
+    # Установка webhook автоматически
+    domain = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    if domain:
+        webhook_url = f"https://{domain}/telegram_webhook"
+        try:
+            await application.bot.set_webhook(url=webhook_url)
+            print(f"Webhook успешно установлен: {webhook_url}")
+        except Exception as e:
+            print(f"Ошибка установки webhook: {e}")
+    else:
+        print("RENDER_EXTERNAL_HOSTNAME не найден — webhook не установлен автоматически")
 
-async def shutdown():
+    # Запуск фоновых задач
+    threading.Thread(target=reminders_checker, daemon=True).start()
+    threading.Thread(target=premium_expiration_checker, daemon=True).start()
+    print("Фоновые проверки запущены")
+
+@app.on_event("shutdown")
+async def shutdown_event():
     print("Остановка Telegram Application...")
     await application.stop()
     await application.shutdown()
     print("Telegram Application остановлен")
 
-def handle_shutdown(signum, frame):
-    print(f"Получен сигнал {signum}, останавливаем приложение...")
-    asyncio.run(shutdown())
-
-signal.signal(signal.SIGTERM, handle_shutdown)
-signal.signal(signal.SIGINT, handle_shutdown)
-
-print("Приложение готово к работе. Ожидание запросов...")
+print("Приложение готово к запуску под uvicorn / FastAPI")
