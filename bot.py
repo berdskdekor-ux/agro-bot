@@ -144,11 +144,13 @@ def premium_expiration_checker():
             save_data()
             print("Обновлены статусы премиум-доступа")
         time.sleep(300)
-# ─── YandexGPT ───
-def ask_yandexgpt(region, question):
+# ─── YandexGPT ───def ask_yandexgpt(region, question):
     try:
         url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-        headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Api-Key {YANDEX_API_KEY}",
+            "Content-Type": "application/json"
+        }
         data = {
             "modelUri": f"gpt://{YANDEX_FOLDER_ID}/yandexgpt-lite",
             "completionOptions": {"stream": False, "temperature": 0.75, "maxTokens": 1200},
@@ -157,12 +159,43 @@ def ask_yandexgpt(region, question):
                 {"role": "user", "text": question}
             ]
         }
-        response = requests.post(url, headers=headers, json=data, timeout=15)
+
+        print("[YandexGPT] → Отправка запроса...")
+        print(f"  URL: {url}")
+        print(f"  Folder ID: {YANDEX_FOLDER_ID[:8]}...")  # частично, для безопасности
+        print(f"  Вопрос: {question[:100]}...")
+
+        response = requests.post(url, headers=headers, json=data, timeout=20)
+
+        print(f"[YandexGPT] ← Статус: {response.status_code}")
+        if response.status_code != 200:
+            print(f"[YandexGPT] ← Текст ошибки: {response.text[:500]}")
+
         response.raise_for_status()
-        return response.json()["result"]["alternatives"][0]["message"]["text"].strip()
+
+        result = response.json()
+        text = result["result"]["alternatives"][0]["message"]["text"].strip()
+        print(f"[YandexGPT] ← Получен ответ длиной {len(text)} символов")
+        return text
+
+    except requests.exceptions.Timeout:
+        print("[YandexGPT] Таймаут запроса (>20 сек)")
+        return "Ошибка: слишком долго ждём ответа от YandexGPT. Попробуйте позже."
+
+    except requests.exceptions.RequestException as e:
+        print(f"[YandexGPT] Сетевая ошибка: {type(e).__name__}: {str(e)}")
+        return f"Сетевая ошибка при обращении к YandexGPT: {str(e)}"
+
+    except KeyError as e:
+        print(f"[YandexGPT] Ошибка парсинга JSON: нет ключа {e}")
+        print(f"Полный ответ сервера: {response.text[:1000]}")
+        return "Ошибка обработки ответа от YandexGPT (неверный формат)"
+
     except Exception as e:
-        print(f"YandexGPT FAIL: {type(e).__name__}: {str(e)}")
-        return f"Ошибка YandexGPT: {str(e)}. Попробуй спросить проще или позже."
+        print(f"[YandexGPT] Неожиданная ошибка: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return f"Неизвестная ошибка YandexGPT: {str(e)}. Попробуйте позже."
 # ─── Погода ───
 def get_week_weather(city):
     try:
