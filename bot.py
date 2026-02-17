@@ -368,7 +368,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     use_feature(uid, "photos")
     photo = update.message.photo[-1].file_id
     analysis = await analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
-    await update.message.reply_text(analysis, reply_markup=main_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text(analysis, reply_markup=main_keyboard())
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text.strip() if update.message.text else ""
