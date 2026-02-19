@@ -43,6 +43,20 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 # ─── FastAPI приложение ───
 app = FastAPI(title="Агроном-бот", description="Telegram бот для садоводов и огородников")
+@app.get("/success")
+async def payment_success():
+    html_content = """
+    <html>
+        <head><title>Оплата прошла успешно</title></head>
+        <body style="font-family:sans-serif; text-align:center; padding:50px;">
+            <h1 style="color:#2e7d32;">Оплата прошла успешно! 🎉</h1>
+            <p>Премиум-доступ уже активирован в боте.</p>
+            <p>Можете вернуться в Telegram и продолжить пользоваться ботом.</p>
+            <p><a href="https://t.me/ВашБотНик">Вернуться в бот</a></p>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=200)
 
 # ─── Telegram Application ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
