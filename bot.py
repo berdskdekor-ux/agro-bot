@@ -235,9 +235,9 @@ async def analyze_plantnet(file_id, region):
     temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
         file = await application.bot.get_file(file_id)
-        downloaded_file = await application.bot.download_file(file.file_path)
+        photo_bytes = await file_obj.download_as_bytearray()
         with open(temp_path, "wb") as f:
-            f.write(downloaded_file)
+            f.write(photo_bytes)
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
         with open(temp_path, 'rb') as img_file:
