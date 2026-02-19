@@ -339,24 +339,27 @@ async def yookassa_webhook(request: Request):
         event = await request.json()
         notification = WebhookNotification(event)
         if notification.event == "payment.succeeded":
-    payment = notification.object
-    metadata = payment.metadata or {}
-    uid = metadata.get("user_id")
-    plan = metadata.get("plan")
-    if uid and plan:
-        days_map = {"day": 1, "week": 7, "month": 30, "year": 365}
-        days = days_map.get(plan, 30)
-        now = datetime.now()
-        until = now + timedelta(days=days)
-        
-        user = user_data.setdefault(uid, {})
-        user["premium"] = True
-        user["premium_until"] = until.isoformat()
-        save_data()
-
-        # ─── Улучшенное сообщение после оплаты ───
-        success_msg = (
-            "🎉 <b>Оплата прошла успешно!</b>\n\n"
+            payment = notification.object
+            metadata = payment.metadata or {}
+            uid = metadata.get("user_id")
+            plan = metadata.get("plan")
+            if uid and plan:
+                days_map = {"day": 1, "week": 7, "month": 30, "year": 365}
+                days = days_map.get(plan, 30)
+                now = datetime.now()
+                until = now + timedelta(days=days)
+                
+                user = user_data.setdefault(uid, {})
+                user["premium"] = True
+                user["premium_until"] = until.isoformat()
+                save_data()
+                
+                success_msg = (
+                    "🎉 <b>Оплата прошла успешно!</b>\n\n"
+                )
+                
+                # asyncio.run_coroutine_threadsafe( ... )
+               
             f"💎 Премиум-доступ активирован до <b>{until.strftime('%d.%m.%Y %H:%M')}</b>\n"
             "Теперь у тебя:\n"
             "• безлимитная диагностика растений\n"
