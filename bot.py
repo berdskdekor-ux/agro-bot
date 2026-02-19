@@ -232,24 +232,44 @@ def get_week_weather(city):
 
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
+    """
+    Анализирует фотографию растения через PlantNet + YandexGPT.
+    Возвращает текстовый результат или сообщение об ошибке.
+    """
     temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
-        file = await application.bot.get_file(file_id)
+        print(f"[PLANTNET] Начинаем обработку фото, file_id={file_id}, region={region}")
+
+        # 1. Получаем объект File из Telegram
+        file_obj = await application.bot.get_file(file_id)
+        print(f"[PLANTNET] Получен File объект, file_path={file_obj.file_path}")
+
+        # 2. Скачиваем фото в память (bytearray)
         photo_bytes = await file_obj.download_as_bytearray()
+        print(f"[PLANTNET] Фото скачано, размер: {len(photo_bytes)} байт")
+
+        # 3. Сохраняем на диск для отправки в PlantNet
         with open(temp_path, "wb") as f:
             f.write(photo_bytes)
+        print(f"[PLANTNET] Фото сохранено во временный файл: {temp_path}")
+
+        # 4. Отправляем в PlantNet API
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
+
         with open(temp_path, 'rb') as img_file:
             files = {'images': ('photo.jpg', img_file, 'image/jpeg')}
             response = requests.post(url, files=files, params=params, timeout=30)
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+
+        print(f"[PLANTNET] Ответ от API: status={response.status_code}")
+
         if response.status_code != 200:
-            return f"Pl@ntNet ошибка {response.status_code}"
+            return f"Pl@ntNet вернул ошибку {response.status_code}: {response.text[:200]}"
+
         data = response.json()
         if "results" not in data or not data["results"]:
-            return "Растение не распознано."
+            return "Растение не распознано. Попробуйте фото крупнее / чётче / с другого ракурса."
+
         best = data["results"][0]
         species = best["species"]
         sci_name = species.get("scientificNameWithoutAuthor", "—")
@@ -257,15 +277,32 @@ async def analyze_plantnet(file_id, region):
         common_names = species.get("commonNames", [])
         common_str = ", ".join(common_names[:3]) if common_names else "—"
         score = best["score"] * 100
-        desc = f"**{sci_name}**\nСемейство: {family}\nНародные названия: {common_str}\nУверенность: {score:.1f}%"
-        prompt = f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
-        gpt_advice = ask_yandexgpt(region, prompt)
-        return f"Анализ фото:\n{desc}\n\n{gpt_advice}"
-    except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return f"Ошибка анализа: {str(e)}"
 
+        desc = f"**{sci_name}**\nСемейство: {family}\nНародные названия: {common_str}\nУверенность: {score:.1f}%"
+
+        # Запрос к YandexGPT с информацией о растении
+        prompt = (
+            f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. "
+            f"Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
+        )
+        gpt_advice = ask_yandexgpt(region, prompt)
+
+        result = f"Анализ фото:\n{desc}\n\n{gpt_advice}"
+        return result
+
+    except Exception as e:
+        error_text = f"Ошибка анализа: {type(e).__name__}: {str(e)}"
+        print(f"[PLANTNET-ERROR] {error_text}")
+        return error_text + "\n\nПопробуйте отправить другое фото или повторить позже."
+
+    finally:
+        # Удаляем временный файл в любом случае
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+                print(f"[PLANTNET] Временный файл удалён: {temp_path}")
+            except Exception as cleanup_e:
+                print(f"[PLANTNET-CLEANUP] Не удалось удалить {temp_path}: {cleanup_e}")
 # ─── Напоминания ───
 def get_user_reminders(uid):
     return user_data.get(uid, {}).get("reminders", [])
