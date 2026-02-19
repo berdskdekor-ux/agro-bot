@@ -143,24 +143,36 @@ def premium_expiration_checker():
                             user["premium"] = False
                             user.pop("premium_until", None)
                             changed = True
+                            
+                            # ─── Улучшенное уведомление об окончании ───
+                            expire_msg = (
+                                "⚠️ <b>Премиум-доступ закончился</b>\n\n"
+                                f"Срок действия истёк {until.strftime('%d.%m.%Y %H:%M')}.\n"
+                                "Вернулись обычные лимиты:\n"
+                                "• 2 фото для диагностики в день\n"
+                                "• 5 вопросов агроному в день\n"
+                                "• 1 напоминание\n\n"
+                                "Хочешь вернуть безлимит? Нажми «💎 Премиум» в меню!"
+                            )
+                            
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
-                                    int(uid_str),
-                                    "⚠️ Срок действия вашего Премиум-доступа истёк.\n"
-                                    "Лимиты вернулись к бесплатным значениям.\n"
-                                    "Чтобы продлить — нажмите кнопку «💎 Премиум»"
+                                    chat_id=int(uid_str),
+                                    text=expire_msg,
+                                    parse_mode="HTML",
+                                    reply_markup=main_keyboard()
                                 ),
                                 asyncio.get_event_loop()
                             )
-                    except:
+                    except Exception:
+                        # на случай битой даты
                         user["premium"] = False
                         user.pop("premium_until", None)
                         changed = True
         if changed:
             save_data()
             print("Обновлены статусы премиум-доступа")
-        time.sleep(300)
-
+        time.sleep(300)   # 5 минут
 # ─── YandexGPT ───
 def ask_yandexgpt(region, question):
     try:
@@ -327,25 +339,41 @@ async def yookassa_webhook(request: Request):
         event = await request.json()
         notification = WebhookNotification(event)
         if notification.event == "payment.succeeded":
-            payment = notification.object
-            metadata = payment.metadata or {}
-            uid = metadata.get("user_id")
-            plan = metadata.get("plan")
-            if uid and plan:
-                days_map = {"day": 1, "week": 7, "month": 30, "year": 365}
-                days = days_map.get(plan, 30)
-                now = datetime.now()
-                until = now + timedelta(days=days)
-                user = user_data.setdefault(uid, {})
-                user["premium"] = True
-                user["premium_until"] = until.isoformat()
-                save_data()
-                await application.bot.send_message(
-                    int(uid),
-                    f"✅ Оплата прошла успешно!\nПремиум до **{until.strftime('%d.%m.%Y %H:%M')}**!\nСпасибо 🌱",
-                    parse_mode="Markdown",
-                    reply_markup=main_keyboard()
-                )
+    payment = notification.object
+    metadata = payment.metadata or {}
+    uid = metadata.get("user_id")
+    plan = metadata.get("plan")
+    if uid and plan:
+        days_map = {"day": 1, "week": 7, "month": 30, "year": 365}
+        days = days_map.get(plan, 30)
+        now = datetime.now()
+        until = now + timedelta(days=days)
+        
+        user = user_data.setdefault(uid, {})
+        user["premium"] = True
+        user["premium_until"] = until.isoformat()
+        save_data()
+
+        # ─── Улучшенное сообщение после оплаты ───
+        success_msg = (
+            "🎉 <b>Оплата прошла успешно!</b>\n\n"
+            f"💎 Премиум-доступ активирован до <b>{until.strftime('%d.%m.%Y %H:%M')}</b>\n"
+            "Теперь у тебя:\n"
+            "• безлимитная диагностика растений\n"
+            "• безлимитные запросы к агроному\n"
+            "• безлимитные напоминания\n\n"
+            "Спасибо, что поддерживаешь проект 🌱"
+        )
+        
+        asyncio.run_coroutine_threadsafe(
+            application.bot.send_message(
+                chat_id=int(uid),
+                text=success_msg,
+                parse_mode="HTML",
+                reply_markup=main_keyboard()
+            ),
+            asyncio.get_event_loop()
+        )
         return PlainTextResponse("", status_code=200)
     except Exception as e:
         print(f"Webhook error: {e}")
