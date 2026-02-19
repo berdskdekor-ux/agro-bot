@@ -16,6 +16,8 @@ import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
 
+main_loop = None
+
 # ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
@@ -171,12 +173,12 @@ def premium_expiration_checker():
                             
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
-                                    chat_id=int(uid_str),
-                                    text=expire_msg,
+                                    int(uid_str),
+                                    expire_msg,
                                     parse_mode="HTML",
                                     reply_markup=main_keyboard()
                                 ),
-                                asyncio.get_event_loop()
+                                main_loop
                             )
                     except Exception:
                         # на случай битой даты
@@ -380,12 +382,12 @@ async def yookassa_webhook(request: Request):
         
         asyncio.run_coroutine_threadsafe(
             application.bot.send_message(
-                chat_id=int(uid),
-                text=success_msg,
+                int(uid),
+                success_msg,
                 parse_mode="HTML",
                 reply_markup=main_keyboard()
             ),
-            asyncio.get_event_loop()
+            main_loop
         )
         return PlainTextResponse("", status_code=200)
     except Exception as e:
@@ -897,6 +899,9 @@ def reminders_checker():
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
+    global main_loop
+    main_loop = asyncio.get_running_loop()          # ← сохраняем правильный loop
+    
     print("Starting Telegram Application...")
     await application.initialize()
     await application.start()
