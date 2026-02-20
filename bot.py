@@ -449,9 +449,6 @@ async def telegram_webhook(request: Request):
 @app.get("/health")
 async def health_check():
     return {"status": "OK"}
-
-# ─── Handlers ─── (все твои обработчики остаются без изменений)
-
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -911,27 +908,53 @@ application.add_handler(CallbackQueryHandler(callback_handler))
 
 # ─── Фоновые задачи ───
 def reminders_checker():
+    print("[REMINDER-CHECKER] Фоновая задача запущена")
     while True:
-        now = datetime.now()
-        for uid_str, user in list(user_data.items()):
-            reminders = user.get("reminders", [])
-            for rem in reminders:
-                if rem.get("sent"):
+        try:
+            now = datetime.now()
+            print(f"[REMINDER-CHECKER] Проверка времени: {now.isoformat()}")
+            
+            changed = False
+            for uid_str, user in list(user_data.items()):
+                reminders = user.get("reminders", [])
+                if not reminders:
                     continue
-                try:
-                    rem_time = datetime.fromisoformat(rem["datetime"])
-                    if rem_time <= now:
-                        asyncio.run_coroutine_threadsafe(
-                            application.bot.send_message(
-                                chat_id=int(uid_str),
-                                text=f"🔔 Напоминание!\n{rem['text']}"
-                            ),
-                            asyncio.get_event_loop()
-                        )
-                        mark_reminder_sent(uid_str, rem["id"])
-                except Exception as e:
-                    print(f"Ошибка отправки напоминания {uid_str}: {e}")
-        time.sleep(60)
+                    
+                for rem in reminders:
+                    if rem.get("sent"):
+                        continue
+                        
+                    try:
+                        rem_time = datetime.fromisoformat(rem["datetime"])
+                        print(f"[REMINDER-CHECKER] Проверяем напоминание {rem['id']} пользователя {uid_str}: {rem_time.isoformat()}")
+                        
+                        if rem_time <= now:
+                            print(f"[REMINDER-CHECKER] Время пришло! Отправляем пользователю {uid_str}: {rem['text']}")
+                            
+                            asyncio.run_coroutine_threadsafe(
+                                application.bot.send_message(
+                                    chat_id=int(uid_str),
+                                    text=f"🔔 Напоминание!\n{rem['text']}",
+                                    reply_markup=main_keyboard()
+                                ),
+                                main_loop
+                            ).result(timeout=8)  # ждём до 8 сек, чтобы поймать ошибку
+                            
+                            mark_reminder_sent(uid_str, rem["id"])
+                            changed = True
+                            print(f"[REMINDER-CHECKER] Напоминание {rem['id']} отправлено и помечено как sent")
+                            
+                    except Exception as e:
+                        print(f"[REMINDER-CHECKER-ERROR] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
+            
+            if changed:
+                save_data()
+                print("[REMINDER-CHECKER] Сохранены изменения после отправки")
+                
+        except Exception as outer_e:
+            print(f"[REMINDER-CHECKER-CRITICAL] Ошибка во внешнем цикле: {outer_e}")
+        
+        time.sleep(60)  # проверяем каждую минуту
 
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
