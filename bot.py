@@ -510,7 +510,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = user_data[uid]
     state = user.get("state")
 
-   elif state == STATE_WAIT_REGION:
+    elif state == STATE_WAIT_REGION:
     region = text.strip()
     if len(region) < 3:
         await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
