@@ -405,9 +405,9 @@ def culture_keyboard():
         keyboard.append(row)
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# ─── YooKassa webhook ───
-@app.post("/yookassa-webhook")
-async def yookassa_webhook(request: Request):
+    # ─── YooKassa webhook ───
+    @app.post("/yookassa-webhook")
+    async def yookassa_webhook(request: Request):
     try:
         event = await request.json()
         notification = WebhookNotification(event)
@@ -450,10 +450,10 @@ async def yookassa_webhook(request: Request):
     except Exception as e:
         print(f"Webhook error: {e}")
         return PlainTextResponse("", status_code=200)
-
-# ─── Telegram webhook ───
-@app.post("/telegram_webhook")
-async def telegram_webhook(request: Request):
+    
+    # ─── Telegram webhook ───
+    @app.post("/telegram_webhook")
+    async def telegram_webhook(request: Request):
     if request.headers.get("content-type") != "application/json":
         raise HTTPException(status_code=403)
     try:
@@ -464,12 +464,12 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         print(f"Ошибка process_update: {e}")
         return {}
-
-# ─── Health check ───
-@app.get("/health")
-async def health_check():
+    
+    # ─── Health check ───
+    @app.get("/health")
+    async def health_check():
     return {"status": "OK"}
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
         user_data[uid] = {}
@@ -486,8 +486,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user["state"] = STATE_WAIT_REGION
         save_data()
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data or "region" not in user_data[uid]:
         await update.message.reply_text("Сначала /start и укажи регион.")
@@ -500,8 +500,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1].file_id
     analysis = await analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
     await update.message.reply_text(analysis, reply_markup=main_keyboard())
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text.strip() if update.message.text else ""
     if uid not in user_data:
@@ -509,13 +509,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user = user_data[uid]
     state = user.get("state")
-
+    
     elif state == STATE_WAIT_REGION:
     region = text.strip()
     if len(region) < 3:
         await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
         return
-
+    
     # ─── Определяем timezone по названию региона/города ───
     user_timezone = "UTC"  # fallback
     try:
@@ -535,12 +535,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         print(f"[TZ-ERROR] {type(e).__name__}: {e}")
-
+    
     user["region"] = region
     user["timezone"] = user_timezone          # ← сохраняем строку, например "Asia/Novosibirsk"
     user.pop("state", None)
     save_data()
-
+    
     await update.message.reply_text(
         f"Отлично! Запомнил: **{region}** 🌍\n"
         f"Часовой пояс: **{user_timezone}**\n"
@@ -549,7 +549,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
         return
-
+    
     if state == STATE_ADD_REM_TEXT:
         if not text.strip():
             await update.message.reply_text("Текст не может быть пустым.")
@@ -645,7 +645,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.pop("edit_field", None)
             save_data()
         return
-
+    
     text_lower = text.lower()
     if text == "🌦 Погода":
         answer = get_week_weather(user.get("region", "Moscow"))
@@ -666,36 +666,36 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     elif text == "📅 Календарь посадок":
         calendar_text = """🌙 **Лунный посевной календарь на 2026 год**
-Общие правила:
-🌱 Растущая Луна → «вершки» (томаты 🍅, огурцы 🥒, перец 🌶️, капуста 🥬, зелень 🌿, цветы 🌸)
-🌿 Убывающая Луна → «корешки» (картофель 🥔, морковь 🥕, свёкла 🍠, лук 🧅, чеснок 🧄)
-Самые благоприятные дни (общие, усреднённые):
-Январь: 2, 17, 21–22, 26–27, 30
-Февраль: 13, 18–19, 20–21, 26–27
-Март: 4, 8, 20–21, 26–29
-Апрель: 5, 7–8, 11, 28
-Май: 20–21, 25, 27–29
-Июнь: 9, 21, 23–25
-Июль: 7, 9, 25
-Август: 4, 6, 18–19, 25, 27
-Сентябрь: 1, 12, 15–16, 22
-Октябрь: 17, 22, 24, 29
-Ноябрь: 3–4, 13, 18, 22
-Декабрь: 1, 10–11, 19–20, 28
-**Запрещённые дни** (новолуние / полнолуние):
-Январь: 3, 18
-Февраль: 2, 17
-Март: 3, 19
-Апрель: 2, 17
-Май: 1, 16, 31
-Июнь: 15, 30
-Июль: 14, 29
-Август: 12, 28
-Сентябрь: 11, 26
-Октябрь: 10, 26
-Ноябрь: 8, 24
-Декабрь: 8, 23
-Выбери культуру ниже или напиши свою:"""
+    Общие правила:
+    🌱 Растущая Луна → «вершки» (томаты 🍅, огурцы 🥒, перец 🌶️, капуста 🥬, зелень 🌿, цветы 🌸)
+    🌿 Убывающая Луна → «корешки» (картофель 🥔, морковь 🥕, свёкла 🍠, лук 🧅, чеснок 🧄)
+    Самые благоприятные дни (общие, усреднённые):
+    Январь: 2, 17, 21–22, 26–27, 30
+    Февраль: 13, 18–19, 20–21, 26–27
+    Март: 4, 8, 20–21, 26–29
+    Апрель: 5, 7–8, 11, 28
+    Май: 20–21, 25, 27–29
+    Июнь: 9, 21, 23–25
+    Июль: 7, 9, 25
+    Август: 4, 6, 18–19, 25, 27
+    Сентябрь: 1, 12, 15–16, 22
+    Октябрь: 17, 22, 24, 29
+    Ноябрь: 3–4, 13, 18, 22
+    Декабрь: 1, 10–11, 19–20, 28
+    **Запрещённые дни** (новолуние / полнолуние):
+    Январь: 3, 18
+    Февраль: 2, 17
+    Март: 3, 19
+    Апрель: 2, 17
+    Май: 1, 16, 31
+    Июнь: 15, 30
+    Июль: 14, 29
+    Август: 12, 28
+    Сентябрь: 11, 26
+    Октябрь: 10, 26
+    Ноябрь: 8, 24
+    Декабрь: 8, 23
+    Выбери культуру ниже или напиши свою:"""
         await update.message.reply_text(
             calendar_text,
             reply_markup=culture_keyboard(),
@@ -761,14 +761,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data()
         answer = ask_yandexgpt(user.get("region", "Moscow"), text)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
-
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = str(query.from_user.id)
     user = user_data.setdefault(uid, {})
     data = query.data
-
+    
     if data == "rem_add":
         user["state"] = STATE_ADD_REM_TEXT
         user.pop("temp_rem_id", None)
@@ -951,16 +951,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import traceback
             print(traceback.format_exc())
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
-# ─── Добавляем handlers ───
-application.add_handler(CommandHandler("start", cmd_start))
-application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-application.add_handler(CallbackQueryHandler(callback_handler))
+    # ─── Добавляем handlers ───
+    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    application.add_handler(CallbackQueryHandler(callback_handler))
 
 # ─── Фоновые задачи ───
-def reminders_checker():
+def reme:inders_checker():
     print("[REMINDER-CHECKER] Фоновая задача запущена")
-    while True:
+    while Tru
         now_utc = datetime.now(pytz.UTC)
         changed = False
         
