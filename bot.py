@@ -980,6 +980,7 @@ async def startup_event():
 
     # Запуск фоновых задач
     threading.Thread(target=reminders_checker, daemon=True).start()
+    print("[STARTUP] Запущена проверка напоминаний")
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
     print("Фоновые проверки запущены")
 
