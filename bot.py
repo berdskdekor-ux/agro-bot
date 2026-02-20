@@ -1,3 +1,4 @@
+# bot.py (или main.py) — полный код под FastAPI / ASGI
 import os
 import json
 import time
@@ -15,7 +16,7 @@ from yookassa.domain.notification import WebhookNotification
 from geopy.geocoders import Nominatim
 from timezonefinder import TimezoneFinder
 import pytz
-from datetime import timezone
+from datetime import datetime, timezone
 
 main_loop = None
 
@@ -56,7 +57,7 @@ async def payment_success():
             <h1 style="color:#2e7d32;">Оплата прошла успешно! 🎉</h1>
             <p>Премиум-доступ уже активирован в боте.</p>
             <p>Можете вернуться в Telegram и продолжить пользоваться ботом.</p>
-            <p><a href="https://t.me/ВАШ_БОТ_НИК">Вернуться в бот</a></p>
+            <p><a href="https://t.me/ВашБотНик">Вернуться в бот</a></p>
         </body>
     </html>
     """
@@ -232,6 +233,10 @@ def get_week_weather(city):
 
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
+    """
+    Анализирует фотографию растения через PlantNet + YandexGPT.
+    Возвращает текстовый результат или сообщение об ошибке.
+    """
     temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
         print(f"[PLANTNET] Начинаем обработку фото, file_id={file_id}, region={region}")
@@ -779,7 +784,156 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("← Назад", callback_data="rem_back")
         ])
         await query.edit_message_text(text or "Список пуст", reply_markup=markup)
-    # ... остальной код callback_handler без изменений ...
+    elif data == "rem_edit_menu":
+        reminders = get_user_reminders(uid)
+        if not reminders:
+            await query.answer("Нет напоминаний для редактирования", show_alert=True)
+            return
+        keyboard = []
+        for r in sorted(reminders, key=lambda x: x.get("datetime_utc", "9999")):
+            try:
+                dt_utc = datetime.fromisoformat(r["datetime_utc"]).replace(tzinfo=pytz.UTC)
+                dt_local = dt_utc.astimezone(pytz.timezone(user.get("timezone", "UTC")))
+                btn_text = f"#{r['id']} | {dt_local.strftime('%d.%m %H:%M')} | {r['text'][:25]}{'...' if len(r['text'])>25 else ''}"
+            except:
+                btn_text = f"#{r['id']} | (ошибка даты) | {r['text'][:25]}..."
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"edit_rem_{r['id']}")])
+        keyboard.append([InlineKeyboardButton("← Назад", callback_data="rem_back")])
+        markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("Выберите напоминание:", reply_markup=markup)
+    elif data.startswith("edit_rem_") and not data.startswith(("edit_text_", "edit_date_", "edit_time_")):
+        try:
+            rem_id = int(data.split("_")[-1])
+        except:
+            await query.answer("Некорректный ID", show_alert=True)
+            return
+        reminder = next((r for r in get_user_reminders(uid) if r["id"] == rem_id), None)
+        if not reminder:
+            await query.answer("Напоминание не найдено", show_alert=True)
+            return
+        user["temp_rem_id"] = rem_id
+        user["state"] = STATE_EDIT_REM_CHOOSE
+        try:
+            dt_utc = datetime.fromisoformat(reminder["datetime_utc"]).replace(tzinfo=pytz.UTC)
+            tz = pytz.timezone(user.get("timezone", "UTC"))
+            dt_local = dt_utc.astimezone(tz)
+            dt_str = dt_local.strftime('%d.%m.%Y %H:%M')
+        except:
+            dt_str = "(ошибка формата даты)"
+        text = (
+            f"Напоминание #{rem_id}\n"
+            f"Текст: {reminder['text']}\n"
+            f"Дата и время: {dt_str}\n\n"
+            "Что хотите изменить?"
+        )
+        await query.edit_message_text(text, reply_markup=edit_reminder_actions_markup(rem_id))
+    elif data.startswith(("edit_text_", "edit_date_", "edit_time_")):
+        parts = data.split("_")
+        field = parts[1]
+        try:
+            rem_id = int(parts[2])
+        except:
+            await query.answer("Ошибка", show_alert=True)
+            return
+        user["temp_rem_id"] = rem_id
+        user["edit_field"] = field
+        prompts = {
+            "text": "Введите новый текст напоминания:",
+            "date": "Введите новую дату (дд.мм.гггг):",
+            "time": "Введите новое время (чч:мм):"
+        }
+        await query.edit_message_text(
+            prompts.get(field, "Ошибка поля"),
+            reply_markup=InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton("← Отмена", callback_data="rem_cancel_edit")
+            ])
+        )
+        user["state"] = STATE_EDIT_REM_VALUE
+        save_data()
+    elif data.startswith("del_rem_"):
+        try:
+            rem_id = int(data.split("_")[-1])
+        except:
+            await query.answer("Некорректный ID", show_alert=True)
+            return
+        if delete_reminder(uid, rem_id):
+            await query.answer("Напоминание удалено ✓", show_alert=True)
+            reminders = get_user_reminders(uid)
+            if not reminders:
+                text = "У вас пока нет напоминаний."
+            else:
+                lines = ["Ваши напоминания:"]
+                tz = pytz.timezone(user.get("timezone", "UTC"))
+                for r in sorted(reminders, key=lambda x: x.get("datetime_utc", "9999")):
+                    try:
+                        dt_utc = datetime.fromisoformat(r["datetime_utc"]).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        status = "✅" if r.get("sent") else "⏳"
+                        lines.append(f"{status} #{r['id']} | {dt_local.strftime('%d.%m.%Y %H:%M')} | {r['text'][:40]}{'...' if len(r['text'])>40 else ''}")
+                    except:
+                        lines.append(f"#{r['id']} | (ошибка даты) | {r['text'][:40]}...")
+                text = "\n".join(lines)
+            markup = InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton("← Назад", callback_data="rem_back")
+            ])
+            await query.edit_message_text(text or "Список пуст", reply_markup=markup)
+        else:
+            await query.answer("Не удалось удалить", show_alert=True)
+    elif data in ("rem_cancel", "rem_cancel_edit", "rem_back"):
+        for key in ["state", "temp_rem_id", "edit_field", "temp_rem_text", "temp_rem_date"]:
+            user.pop(key, None)
+        save_data()
+        await query.edit_message_text(
+            "Меню напоминаний",
+            reply_markup=reminder_inline_keyboard()
+        )
+    elif data.startswith("premium_"):
+        plan = data.split("_")[1]
+        print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
+        await query.answer(f"[ТЕСТ] Пытаемся создать платёж для {plan}...", show_alert=True)
+        plans = {
+            "day": {"amount": "10.00", "desc": "Премиум на 1 день"},
+            "week": {"amount": "50.00", "desc": "Премиум на 7 дней"},
+            "month": {"amount": "150.00", "desc": "Премиум на 30 дней"},
+            "year": {"amount": "1500.00", "desc": "Премиум на 365 дней"},
+        }
+        if plan not in plans:
+            print(f"[DEBUG-PREMIUM] Неизвестный план: {plan}")
+            await query.answer("Неизвестный тариф", show_alert=True)
+            return
+        p = plans[plan]
+        try:
+            print(f"[DEBUG-PREMIUM] Создаём платёж: {p['amount']} RUB, описание: {p['desc']}")
+            idempotency_key = str(uuid.uuid4())
+            payment = Payment.create({
+                "amount": {
+                    "value": p["amount"],
+                    "currency": "RUB"
+                },
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": "https://agro-bot-uxva.onrender.com/success"
+                },
+                "capture": True,
+                "description": p["desc"],
+                "metadata": {
+                    "user_id": uid,
+                    "plan": plan
+                }
+            }, idempotency_key)
+            payment_url = payment.confirmation.confirmation_url
+            print(f"[DEBUG-PREMIUM] Ссылка получена: {payment_url}")
+            await query.message.reply_text(
+                f"Для активации премиум перейдите по ссылке:\n\n"
+                f"{payment_url}\n\n"
+                f"После успешной оплаты премиум активируется автоматически."
+            )
+            await query.answer("Ссылка на оплату создана")
+        except Exception as e:
+            print(f"[ERROR-PREMIUM] Ошибка при создании платежа: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
 
 # ─── Фоновые задачи ───
 def reminders_checker():
@@ -813,7 +967,7 @@ def reminders_checker():
             save_data()
         time.sleep(60)
 
-# ─── Lifespan ───
+# ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
     global main_loop
@@ -829,6 +983,8 @@ async def startup_event():
             print(f"Webhook успешно установлен: {webhook_url}")
         except Exception as e:
             print(f"Ошибка установки webhook: {e}")
+    else:
+        print("RENDER_EXTERNAL_HOSTNAME не найден — webhook не установлен автоматически")
     threading.Thread(target=reminders_checker, daemon=True).start()
     print("[STARTUP] Запущена проверка напоминаний")
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
