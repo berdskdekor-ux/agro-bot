@@ -3,3 +3,6 @@ uvicorn[standard]>=0.30.0
 python-telegram-bot>=21.0
 requests
 yookassa
+pytz>=2024.1
+timezonefinder>=6.5.0
+geopy>=2.4.0
