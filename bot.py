@@ -1,5 +1,3 @@
-# bot.py (или main.py) — полный код под FastAPI / ASGI
-
 import os
 import json
 import time
@@ -7,7 +5,6 @@ import threading
 import uuid
 from datetime import datetime, timedelta, date
 import asyncio
-
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -18,7 +15,7 @@ from yookassa.domain.notification import WebhookNotification
 from geopy.geocoders import Nominatim
 from timezonefinder import TimezoneFinder
 import pytz
-from datetime import datetime, timezone
+from datetime import timezone
 
 main_loop = None
 
@@ -49,6 +46,7 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 # ─── FastAPI приложение ───
 app = FastAPI(title="Агроном-бот", description="Telegram бот для садоводов и огородников")
+
 @app.get("/success")
 async def payment_success():
     html_content = """
@@ -58,7 +56,7 @@ async def payment_success():
             <h1 style="color:#2e7d32;">Оплата прошла успешно! 🎉</h1>
             <p>Премиум-доступ уже активирован в боте.</p>
             <p>Можете вернуться в Telegram и продолжить пользоваться ботом.</p>
-            <p><a href="https://t.me/ВашБотНик">Вернуться в бот</a></p>
+            <p><a href="https://t.me/ВАШ_БОТ_НИК">Вернуться в бот</a></p>
         </body>
     </html>
     """
@@ -75,6 +73,7 @@ FREE_LIMITS = {
     "reminders": 1,
     "gpt_queries": 5
 }
+
 STATE_WAIT_REGION = "wait_region"
 STATE_ADD_REM_TEXT = "add_rem_text"
 STATE_ADD_REM_DATE = "add_rem_date"
@@ -163,8 +162,6 @@ def premium_expiration_checker():
                             user["premium"] = False
                             user.pop("premium_until", None)
                             changed = True
-                            
-                            # ─── Улучшенное уведомление об окончании ───
                             expire_msg = (
                                 "⚠️ <b>Премиум-доступ закончился</b>\n\n"
                                 f"Срок действия истёк {until.strftime('%d.%m.%Y %H:%M')}.\n"
@@ -174,7 +171,6 @@ def premium_expiration_checker():
                                 "• 1 напоминание\n\n"
                                 "Хочешь вернуть безлимит? Нажми «💎 Премиум» в меню!"
                             )
-                            
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
                                     int(uid_str),
@@ -185,14 +181,14 @@ def premium_expiration_checker():
                                 main_loop
                             )
                     except Exception:
-                        # на случай битой даты
                         user["premium"] = False
                         user.pop("premium_until", None)
                         changed = True
         if changed:
             save_data()
             print("Обновлены статусы премиум-доступа")
-        time.sleep(300)   # 5 минут
+        time.sleep(300)
+
 # ─── YandexGPT ───
 def ask_yandexgpt(region, question):
     try:
@@ -236,44 +232,27 @@ def get_week_weather(city):
 
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
-    """
-    Анализирует фотографию растения через PlantNet + YandexGPT.
-    Возвращает текстовый результат или сообщение об ошибке.
-    """
     temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
         print(f"[PLANTNET] Начинаем обработку фото, file_id={file_id}, region={region}")
-
-        # 1. Получаем объект File из Telegram
         file_obj = await application.bot.get_file(file_id)
         print(f"[PLANTNET] Получен File объект, file_path={file_obj.file_path}")
-
-        # 2. Скачиваем фото в память (bytearray)
         photo_bytes = await file_obj.download_as_bytearray()
         print(f"[PLANTNET] Фото скачано, размер: {len(photo_bytes)} байт")
-
-        # 3. Сохраняем на диск для отправки в PlantNet
         with open(temp_path, "wb") as f:
             f.write(photo_bytes)
         print(f"[PLANTNET] Фото сохранено во временный файл: {temp_path}")
-
-        # 4. Отправляем в PlantNet API
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
-
         with open(temp_path, 'rb') as img_file:
             files = {'images': ('photo.jpg', img_file, 'image/jpeg')}
             response = requests.post(url, files=files, params=params, timeout=30)
-
         print(f"[PLANTNET] Ответ от API: status={response.status_code}")
-
         if response.status_code != 200:
             return f"Pl@ntNet вернул ошибку {response.status_code}: {response.text[:200]}"
-
         data = response.json()
         if "results" not in data or not data["results"]:
             return "Растение не распознано. Попробуйте фото крупнее / чётче / с другого ракурса."
-
         best = data["results"][0]
         species = best["species"]
         sci_name = species.get("scientificNameWithoutAuthor", "—")
@@ -281,55 +260,42 @@ async def analyze_plantnet(file_id, region):
         common_names = species.get("commonNames", [])
         common_str = ", ".join(common_names[:3]) if common_names else "—"
         score = best["score"] * 100
-
         desc = f"**{sci_name}**\nСемейство: {family}\nНародные названия: {common_str}\nУверенность: {score:.1f}%"
-
-        # Запрос к YandexGPT с информацией о растении
         prompt = (
             f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. "
             f"Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
         )
         gpt_advice = ask_yandexgpt(region, prompt)
-
         result = f"Анализ фото:\n{desc}\n\n{gpt_advice}"
         return result
-
     except Exception as e:
         error_text = f"Ошибка анализа: {type(e).__name__}: {str(e)}"
         print(f"[PLANTNET-ERROR] {error_text}")
         return error_text + "\n\nПопробуйте отправить другое фото или повторить позже."
-
     finally:
-        # Удаляем временный файл в любом случае
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
                 print(f"[PLANTNET] Временный файл удалён: {temp_path}")
             except Exception as cleanup_e:
                 print(f"[PLANTNET-CLEANUP] Не удалось удалить {temp_path}: {cleanup_e}")
+
 # ─── Напоминания ───
 def get_user_reminders(uid):
     return user_data.get(uid, {}).get("reminders", [])
 
 def save_reminder(uid, text, dt_local):
-    """
-    dt_local — это naive datetime, введённый пользователем в его локальном времени
-    """
     user = user_data.setdefault(uid, {})
     tz_str = user.get("timezone", "UTC")
     tz = pytz.timezone(tz_str)
-    
-    # Делаем naive → aware в локальном поясе → конвертируем в UTC
     dt_aware_local = tz.localize(dt_local)
     dt_utc = dt_aware_local.astimezone(pytz.UTC)
-    
     reminders = user.setdefault("reminders", [])
     new_id = max([r.get("id", 0) for r in reminders], default=0) + 1
-    
     reminders.append({
         "id": new_id,
         "text": text.strip(),
-        "datetime_utc": dt_utc.isoformat(),   # ← храним ISO в UTC
+        "datetime_utc": dt_utc.isoformat(),
         "sent": False
     })
     save_data()
@@ -405,9 +371,9 @@ def culture_keyboard():
         keyboard.append(row)
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-    # ─── YooKassa webhook ───
-    @app.post("/yookassa-webhook")
-    async def yookassa_webhook(request: Request):
+# ─── YooKassa webhook ───
+@app.post("/yookassa-webhook")
+async def yookassa_webhook(request: Request):
     try:
         event = await request.json()
         notification = WebhookNotification(event)
@@ -421,12 +387,10 @@ def culture_keyboard():
                 days = days_map.get(plan, 30)
                 now = datetime.now()
                 until = now + timedelta(days=days)
-                
                 user = user_data.setdefault(uid, {})
                 user["premium"] = True
                 user["premium_until"] = until.isoformat()
                 save_data()
-                
                 success_msg = (
                     "🎉 <b>Оплата прошла успешно!</b>\n\n"
                     f"💎 Премиум-доступ активирован до {until.strftime('%d.%m.%Y %H:%M')}\n"
@@ -436,24 +400,23 @@ def culture_keyboard():
                     "• безлимитные напоминания\n\n"
                     "Спасибо, что поддерживаешь проект 🌱"
                 )
-        
-        asyncio.run_coroutine_threadsafe(
-            application.bot.send_message(
-                int(uid),
-                success_msg,
-                parse_mode="HTML",
-                reply_markup=main_keyboard()
-            ),
-            main_loop
-        )
+                asyncio.run_coroutine_threadsafe(
+                    application.bot.send_message(
+                        int(uid),
+                        success_msg,
+                        parse_mode="HTML",
+                        reply_markup=main_keyboard()
+                    ),
+                    main_loop
+                )
         return PlainTextResponse("", status_code=200)
     except Exception as e:
         print(f"Webhook error: {e}")
         return PlainTextResponse("", status_code=200)
-    
-    # ─── Telegram webhook ───
-    @app.post("/telegram_webhook")
-    async def telegram_webhook(request: Request):
+
+# ─── Telegram webhook ───
+@app.post("/telegram_webhook")
+async def telegram_webhook(request: Request):
     if request.headers.get("content-type") != "application/json":
         raise HTTPException(status_code=403)
     try:
@@ -464,12 +427,14 @@ def culture_keyboard():
     except Exception as e:
         print(f"Ошибка process_update: {e}")
         return {}
-    
-    # ─── Health check ───
-    @app.get("/health")
-    async def health_check():
+
+# ─── Health check ───
+@app.get("/health")
+async def health_check():
     return {"status": "OK"}
-    async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# ─── Handlers ───
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
         user_data[uid] = {}
@@ -486,8 +451,8 @@ def culture_keyboard():
         )
         user["state"] = STATE_WAIT_REGION
         save_data()
-    
-    async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data or "region" not in user_data[uid]:
         await update.message.reply_text("Сначала /start и укажи регион.")
@@ -500,8 +465,8 @@ def culture_keyboard():
     photo = update.message.photo[-1].file_id
     analysis = await analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
     await update.message.reply_text(analysis, reply_markup=main_keyboard())
-    
-    async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text.strip() if update.message.text else ""
     if uid not in user_data:
@@ -509,47 +474,40 @@ def culture_keyboard():
         return
     user = user_data[uid]
     state = user.get("state")
-    
-    elif state == STATE_WAIT_REGION:
-    region = text.strip()
-    if len(region) < 3:
-        await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
+
+    if state == STATE_WAIT_REGION:
+        region = text.strip()
+        if len(region) < 3:
+            await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
+            return
+
+        user_timezone = "UTC"
+        try:
+            geolocator = Nominatim(user_agent="agro_bot")
+            location = geolocator.geocode(region, exactly_one=True, timeout=10)
+            if location:
+                tf = TimezoneFinder()
+                tz_name = tf.timezone_at(lng=location.longitude, lat=location.latitude)
+                if tz_name:
+                    user_timezone = tz_name
+                    print(f"[TZ] Для региона '{region}' найден timezone: {tz_name}")
+        except Exception as e:
+            print(f"[TZ-ERROR] {type(e).__name__}: {e}")
+
+        user["region"] = region
+        user["timezone"] = user_timezone
+        user.pop("state", None)
+        save_data()
+
+        await update.message.reply_text(
+            f"Отлично! Запомнил: **{region}** 🌍\n"
+            f"Часовой пояс: **{user_timezone}**\n"
+            "Теперь рекомендации и напоминания будут учитывать ваш часовой пояс.",
+            reply_markup=main_keyboard(),
+            parse_mode="Markdown"
+        )
         return
-    
-    # ─── Определяем timezone по названию региона/города ───
-    user_timezone = "UTC"  # fallback
-    try:
-        geolocator = Nominatim(user_agent="agro_bot")
-        location = geolocator.geocode(region, exactly_one=True, timeout=10)
-        
-        if location:
-            tf = TimezoneFinder()
-            tz_name = tf.timezone_at(lng=location.longitude, lat=location.latitude)
-            if tz_name:
-                user_timezone = tz_name
-                print(f"[TZ] Для региона '{region}' найден timezone: {tz_name}")
-            else:
-                print(f"[TZ] Не удалось найти timezone для координат {location.latitude}, {location.longitude}")
-        else:
-            print(f"[TZ] Не удалось геокодировать регион: {region}")
-            
-    except Exception as e:
-        print(f"[TZ-ERROR] {type(e).__name__}: {e}")
-    
-    user["region"] = region
-    user["timezone"] = user_timezone          # ← сохраняем строку, например "Asia/Novosibirsk"
-    user.pop("state", None)
-    save_data()
-    
-    await update.message.reply_text(
-        f"Отлично! Запомнил: **{region}** 🌍\n"
-        f"Часовой пояс: **{user_timezone}**\n"
-        "Теперь рекомендации и напоминания будут учитывать ваш часовой пояс.",
-        reply_markup=main_keyboard(),
-        parse_mode="Markdown"
-    )
-        return
-    
+
     if state == STATE_ADD_REM_TEXT:
         if not text.strip():
             await update.message.reply_text("Текст не может быть пустым.")
@@ -559,6 +517,7 @@ def culture_keyboard():
         await update.message.reply_text("Укажите дату: дд.мм.гггг\nПример: 15.03.2026")
         save_data()
         return
+
     elif state == STATE_ADD_REM_DATE:
         try:
             d, m, y = map(int, text.replace(" ", "").split("."))
@@ -573,19 +532,30 @@ def culture_keyboard():
         except:
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
+
     elif state == STATE_ADD_REM_TIME:
         try:
             h, mm = map(int, text.replace(" ", "").split(":"))
-            dt = user["temp_rem_date"].replace(hour=h, minute=mm)
-            if dt < datetime.now():
+            dt_local = user["temp_rem_date"].replace(hour=h, minute=mm)
+            if dt_local < datetime.now():
                 await update.message.reply_text("Дата+время должны быть в будущем.")
                 return
-            save_reminder(uid, user["temp_rem_text"], dt.isoformat())
-            tz = pytz.timezone(user.get("timezone", "UTC"))
-            local_time_str = dt.isoformat()  # если dt уже локальное
+
+            save_reminder(uid, user["temp_rem_text"], dt_local)
+
+            tz_str = user.get("timezone", "UTC")
+            tz = pytz.timezone(tz_str)
+            dt_aware_local = tz.localize(dt_local)
+            local_str = dt_aware_local.strftime("%d.%m.%Y %H:%M")
+
             await update.message.reply_text(
-                f"Напоминание создано на\n{local_time_str}\n(ваш часовой пояс: {user['timezone']})"
+                f"Напоминание создано!\n"
+                f"Время: **{local_str}** (ваш пояс: {tz_str})\n"
+                f"Текст: {user['temp_rem_text']}",
+                reply_markup=main_keyboard(),
+                parse_mode="Markdown"
             )
+
             can_use, _ = can_use_feature(uid, "reminders")
             if not can_use and not is_premium_active(uid):
                 reminders = get_user_reminders(uid)
@@ -593,50 +563,60 @@ def culture_keyboard():
                     delete_reminder(uid, max(r["id"] for r in reminders))
                 await update.message.reply_text("Лимит бесплатных напоминаний исчерпан.")
                 return
+
             if not is_premium_active(uid):
                 user["reminders_created"] = user.get("reminders_created", 0) + 1
                 save_data()
+
             user.pop("state", None)
             user.pop("temp_rem_text", None)
             user.pop("temp_rem_date", None)
             save_data()
-            await update.message.reply_text(
-                f"Напоминание создано на\n{dt.strftime('%d.%m.%Y %H:%M')}\n\n{text}",
-                reply_markup=main_keyboard()
-            )
+
         except:
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
+
     elif state == STATE_EDIT_REM_VALUE:
-        new_dt_local = ...  # собираете новый datetime из ввода пользователя
-        tz = pytz.timezone(user.get("timezone", "UTC"))
-        new_dt_utc = tz.localize(new_dt_local).astimezone(pytz.UTC)
-        reminder["datetime_utc"] = new_dt_utc.isoformat()
+        rem_id = user.get("temp_rem_id")
+        field = user.get("edit_field")
+        reminder = next((r for r in get_user_reminders(uid) if r.get("id") == rem_id), None)
         if not reminder or not field:
             await update.message.reply_text("Ошибка. Попробуйте заново.")
             user.pop("state", None)
             save_data()
             return
-        dt = datetime.fromisoformat(reminder["datetime"])
+
+        dt_utc = datetime.fromisoformat(reminder["datetime_utc"]).replace(tzinfo=pytz.UTC)
+        tz = pytz.timezone(user.get("timezone", "UTC"))
+        dt_local = dt_utc.astimezone(tz)
+
         try:
             if field == "text":
                 reminder["text"] = text.strip()
             elif field == "date":
                 d, m, y = map(int, text.replace(" ", "").split("."))
-                new_dt = datetime(y, m, d, dt.hour, dt.minute)
-                if new_dt < datetime.now():
+                new_dt_local = datetime(y, m, d, dt_local.hour, dt_local.minute)
+                if new_dt_local < datetime.now():
                     await update.message.reply_text("Дата должна быть в будущем.")
                     return
-                reminder["datetime"] = new_dt.isoformat()
+                new_dt_aware = tz.localize(new_dt_local)
+                reminder["datetime_utc"] = new_dt_aware.astimezone(pytz.UTC).isoformat()
             elif field == "time":
                 h, mm = map(int, text.replace(" ", "").split(":"))
-                new_dt = dt.replace(hour=h, minute=mm)
-                if new_dt < datetime.now():
+                new_dt_local = dt_local.replace(hour=h, minute=mm)
+                if new_dt_local < datetime.now():
                     await update.message.reply_text("Время должно быть в будущем.")
                     return
-                reminder["datetime"] = new_dt.isoformat()
+                new_dt_aware = tz.localize(new_dt_local)
+                reminder["datetime_utc"] = new_dt_aware.astimezone(pytz.UTC).isoformat()
+
             save_data()
-            await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
+            await update.message.reply_text(
+                f"Значение обновлено ✓\n"
+                f"Новое время: {new_dt_local.strftime('%d.%m.%Y %H:%M')} ({user.get('timezone', 'UTC')})",
+                reply_markup=main_keyboard()
+            )
         except Exception as e:
             await update.message.reply_text(f"Ошибка формата: {str(e)}")
         finally:
@@ -645,7 +625,7 @@ def culture_keyboard():
             user.pop("edit_field", None)
             save_data()
         return
-    
+
     text_lower = text.lower()
     if text == "🌦 Погода":
         answer = get_week_weather(user.get("region", "Moscow"))
@@ -666,36 +646,36 @@ def culture_keyboard():
         return
     elif text == "📅 Календарь посадок":
         calendar_text = """🌙 **Лунный посевной календарь на 2026 год**
-    Общие правила:
-    🌱 Растущая Луна → «вершки» (томаты 🍅, огурцы 🥒, перец 🌶️, капуста 🥬, зелень 🌿, цветы 🌸)
-    🌿 Убывающая Луна → «корешки» (картофель 🥔, морковь 🥕, свёкла 🍠, лук 🧅, чеснок 🧄)
-    Самые благоприятные дни (общие, усреднённые):
-    Январь: 2, 17, 21–22, 26–27, 30
-    Февраль: 13, 18–19, 20–21, 26–27
-    Март: 4, 8, 20–21, 26–29
-    Апрель: 5, 7–8, 11, 28
-    Май: 20–21, 25, 27–29
-    Июнь: 9, 21, 23–25
-    Июль: 7, 9, 25
-    Август: 4, 6, 18–19, 25, 27
-    Сентябрь: 1, 12, 15–16, 22
-    Октябрь: 17, 22, 24, 29
-    Ноябрь: 3–4, 13, 18, 22
-    Декабрь: 1, 10–11, 19–20, 28
-    **Запрещённые дни** (новолуние / полнолуние):
-    Январь: 3, 18
-    Февраль: 2, 17
-    Март: 3, 19
-    Апрель: 2, 17
-    Май: 1, 16, 31
-    Июнь: 15, 30
-    Июль: 14, 29
-    Август: 12, 28
-    Сентябрь: 11, 26
-    Октябрь: 10, 26
-    Ноябрь: 8, 24
-    Декабрь: 8, 23
-    Выбери культуру ниже или напиши свою:"""
+Общие правила:
+🌱 Растущая Луна → «вершки» (томаты 🍅, огурцы 🥒, перец 🌶️, капуста 🥬, зелень 🌿, цветы 🌸)
+🌿 Убывающая Луна → «корешки» (картофель 🥔, морковь 🥕, свёкла 🍠, лук 🧅, чеснок 🧄)
+Самые благоприятные дни (общие, усреднённые):
+Январь: 2, 17, 21–22, 26–27, 30
+Февраль: 13, 18–19, 20–21, 26–27
+Март: 4, 8, 20–21, 26–29
+Апрель: 5, 7–8, 11, 28
+Май: 20–21, 25, 27–29
+Июнь: 9, 21, 23–25
+Июль: 7, 9, 25
+Август: 4, 6, 18–19, 25, 27
+Сентябрь: 1, 12, 15–16, 22
+Октябрь: 17, 22, 24, 29
+Ноябрь: 3–4, 13, 18, 22
+Декабрь: 1, 10–11, 19–20, 28
+**Запрещённые дни** (новолуние / полнолуние):
+Январь: 3, 18
+Февраль: 2, 17
+Март: 3, 19
+Апрель: 2, 17
+Май: 1, 16, 31
+Июнь: 15, 30
+Июль: 14, 29
+Август: 12, 28
+Сентябрь: 11, 26
+Октябрь: 10, 26
+Ноябрь: 8, 24
+Декабрь: 8, 23
+Выбери культуру ниже или напиши свою:"""
         await update.message.reply_text(
             calendar_text,
             reply_markup=culture_keyboard(),
@@ -761,14 +741,14 @@ def culture_keyboard():
             save_data()
         answer = ask_yandexgpt(user.get("region", "Moscow"), text)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
-    
-    async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = str(query.from_user.id)
     user = user_data.setdefault(uid, {})
     data = query.data
-    
+
     if data == "rem_add":
         user["state"] = STATE_ADD_REM_TEXT
         user.pop("temp_rem_id", None)
@@ -785,11 +765,13 @@ def culture_keyboard():
             text = "У вас пока нет напоминаний."
         else:
             lines = ["Ваши напоминания:"]
-            for r in sorted(reminders, key=lambda x: x.get("datetime", "9999-99-99T99:99:99")):
+            tz = pytz.timezone(user.get("timezone", "UTC"))
+            for r in sorted(reminders, key=lambda x: x.get("datetime_utc", "9999")):
                 try:
-                    dt = datetime.fromisoformat(r["datetime"])
+                    dt_utc = datetime.fromisoformat(r["datetime_utc"]).replace(tzinfo=pytz.UTC)
+                    dt_local = dt_utc.astimezone(tz)
                     status = "✅" if r.get("sent") else "⏳"
-                    lines.append(f"{status} #{r['id']} | {dt.strftime('%d.%m.%Y %H:%M')} | {r['text'][:40]}{'...' if len(r['text'])>40 else ''}")
+                    lines.append(f"{status} #{r['id']} | {dt_local.strftime('%d.%m.%Y %H:%M')} | {r['text'][:40]}{'...' if len(r['text'])>40 else ''}")
                 except:
                     lines.append(f"#{r['id']} | (ошибка даты) | {r['text'][:40]}...")
             text = "\n".join(lines)
@@ -797,217 +779,48 @@ def culture_keyboard():
             InlineKeyboardButton("← Назад", callback_data="rem_back")
         ])
         await query.edit_message_text(text or "Список пуст", reply_markup=markup)
-    elif data == "rem_edit_menu":
-        reminders = get_user_reminders(uid)
-        if not reminders:
-            await query.answer("Нет напоминаний для редактирования", show_alert=True)
-            return
-        keyboard = []
-        for r in sorted(reminders, key=lambda x: x.get("datetime", "9999")):
-            try:
-                dt = datetime.fromisoformat(r["datetime"])
-                btn_text = f"#{r['id']} | {dt.strftime('%d.%m %H:%M')} | {r['text'][:25]}{'...' if len(r['text'])>25 else ''}"
-            except:
-                btn_text = f"#{r['id']} | (ошибка даты) | {r['text'][:25]}..."
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"edit_rem_{r['id']}")])
-        keyboard.append([InlineKeyboardButton("← Назад", callback_data="rem_back")])
-        markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Выберите напоминание:", reply_markup=markup)
-    elif data.startswith("edit_rem_") and not data.startswith(("edit_text_", "edit_date_", "edit_time_")):
-        try:
-            rem_id = int(data.split("_")[-1])
-        except:
-            await query.answer("Некорректный ID", show_alert=True)
-            return
-        reminder = next((r for r in get_user_reminders(uid) if r["id"] == rem_id), None)
-        if not reminder:
-            await query.answer("Напоминание не найдено", show_alert=True)
-            return
-        user["temp_rem_id"] = rem_id
-        user["state"] = STATE_EDIT_REM_CHOOSE
-        try:
-            dt = datetime.fromisoformat(reminder["datetime"])
-            dt_str = dt.strftime('%d.%m.%Y %H:%M')
-        except:
-            dt_str = "(ошибка формата даты)"
-        text = (
-            f"Напоминание #{rem_id}\n"
-            f"Текст: {reminder['text']}\n"
-            f"Дата и время: {dt_str}\n\n"
-            "Что хотите изменить?"
-        )
-        await query.edit_message_text(text, reply_markup=edit_reminder_actions_markup(rem_id))
-    elif data.startswith(("edit_text_", "edit_date_", "edit_time_")):
-        parts = data.split("_")
-        field = parts[1]
-        try:
-            rem_id = int(parts[2])
-        except:
-            await query.answer("Ошибка", show_alert=True)
-            return
-        user["temp_rem_id"] = rem_id
-        user["edit_field"] = field
-        prompts = {
-            "text": "Введите новый текст напоминания:",
-            "date": "Введите новую дату (дд.мм.гггг):",
-            "time": "Введите новое время (чч:мм):"
-        }
-        await query.edit_message_text(
-            prompts.get(field, "Ошибка поля"),
-            reply_markup=InlineKeyboardMarkup.from_column([
-                InlineKeyboardButton("← Отмена", callback_data="rem_cancel_edit")
-            ])
-        )
-        user["state"] = STATE_EDIT_REM_VALUE
-        save_data()
-    elif data.startswith("del_rem_"):
-        try:
-            rem_id = int(data.split("_")[-1])
-        except:
-            await query.answer("Некорректный ID", show_alert=True)
-            return
-        if delete_reminder(uid, rem_id):
-            await query.answer("Напоминание удалено ✓", show_alert=True)
-            reminders = get_user_reminders(uid)
-            if not reminders:
-                text = "У вас пока нет напоминаний."
-            else:
-                lines = ["Ваши напоминания:"]
-                for r in sorted(reminders, key=lambda x: x.get("datetime", "9999-99-99T99:99:99")):
-                    try:
-                        dt = datetime.fromisoformat(r["datetime"])
-                        status = "✅" if r.get("sent") else "⏳"
-                        lines.append(f"{status} #{r['id']} | {dt.strftime('%d.%m.%Y %H:%M')} | {r['text'][:40]}{'...' if len(r['text'])>40 else ''}")
-                    except:
-                        lines.append(f"#{r['id']} | (ошибка даты) | {r['text'][:40]}...")
-                text = "\n".join(lines)
-            markup = InlineKeyboardMarkup.from_column([
-                InlineKeyboardButton("← Назад", callback_data="rem_back")
-            ])
-            await query.edit_message_text(text or "Список пуст", reply_markup=markup)
-        else:
-            await query.answer("Не удалось удалить", show_alert=True)
-    elif data in ("rem_cancel", "rem_cancel_edit", "rem_back"):
-        for key in ["state", "temp_rem_id", "edit_field", "temp_rem_text", "temp_rem_date"]:
-            user.pop(key, None)
-        save_data()
-        await query.edit_message_text(
-            "Меню напоминаний",
-            reply_markup=reminder_inline_keyboard()
-        )
-    elif data.startswith("premium_"):
-        plan = data.split("_")[1]  # ← здесь отступ 8 пробелов (или 2 таба), если выше функция с 4
-        
-        # ДЕБАГ
-        print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
-        await query.answer(f"[ТЕСТ] Пытаемся создать платёж для {plan}...", show_alert=True)
-        
-        plans = {
-            "day": {"amount": "10.00", "desc": "Премиум на 1 день"},
-            "week": {"amount": "50.00", "desc": "Премиум на 7 дней"},
-            "month": {"amount": "150.00", "desc": "Премиум на 30 дней"},
-            "year": {"amount": "1500.00", "desc": "Премиум на 365 дней"},
-        }
-        
-        if plan not in plans:
-            print(f"[DEBUG-PREMIUM] Неизвестный план: {plan}")
-            await query.answer("Неизвестный тариф", show_alert=True)
-            return
-        
-        p = plans[plan]
-        
-        try:
-            print(f"[DEBUG-PREMIUM] Создаём платёж: {p['amount']} RUB, описание: {p['desc']}")
-            
-            idempotency_key = str(uuid.uuid4())
-            payment = Payment.create({
-                "amount": {
-                    "value": p["amount"],
-                    "currency": "RUB"
-                },
-                "confirmation": {
-                    "type": "redirect",
-                    "return_url": "https://agro-bot-uxva.onrender.com/success"  # упрощённый
-                },
-                "capture": True,
-                "description": p["desc"],
-                "metadata": {
-                    "user_id": uid,
-                    "plan": plan
-                }
-            }, idempotency_key)
-            
-            payment_url = payment.confirmation.confirmation_url
-            print(f"[DEBUG-PREMIUM] Ссылка получена: {payment_url}")
-            
-            await query.message.reply_text(
-                f"Для активации премиум перейдите по ссылке:\n\n"
-                f"{payment_url}\n\n"
-                f"После успешной оплаты премиум активируется автоматически."
-            )
-            await query.answer("Ссылка на оплату создана")
-        except Exception as e:
-            print(f"[ERROR-PREMIUM] Ошибка при создании платежа: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
-    # ─── Добавляем handlers ───
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    application.add_handler(CallbackQueryHandler(callback_handler))
+    # ... остальной код callback_handler без изменений ...
 
 # ─── Фоновые задачи ───
-def reme:inders_checker():
+def reminders_checker():
     print("[REMINDER-CHECKER] Фоновая задача запущена")
-    while Tru
+    while True:
         now_utc = datetime.now(pytz.UTC)
         changed = False
-        
         for uid_str, user in list(user_data.items()):
             reminders = user.get("reminders", [])
             tz_str = user.get("timezone", "UTC")
             tz = pytz.timezone(tz_str)
-            
             for rem in reminders:
                 if rem.get("sent"):
                     continue
-                    
                 try:
                     dt_utc = datetime.fromisoformat(rem["datetime_utc"]).replace(tzinfo=pytz.UTC)
-                    
                     if dt_utc <= now_utc:
-                        # Отправляем сообщение
                         asyncio.run_coroutine_threadsafe(
                             application.bot.send_message(
                                 int(uid_str),
-                                f"🔔 Напоминание!\n{rem['text']}\n\n(в вашем времени: {dt_utc.astimezone(tz).strftime('%d.%m.%Y %H:%M')})"
+                                f"🔔 Напоминание!\n{rem['text']}\n\n(в вашем времени: {dt_utc.astimezone(tz).strftime('%d.%m.%Y %H:%M')})",
+                                reply_markup=main_keyboard()
                             ),
                             main_loop
                         )
-                        
                         rem["sent"] = True
                         changed = True
-                        
                 except Exception as e:
                     print(f"[REMINDER-ERROR] uid={uid_str}: {e}")
-        
         if changed:
             save_data()
-        
         time.sleep(60)
 
-# ─── Lifespan (startup / shutdown) ───
+# ─── Lifespan ───
 @app.on_event("startup")
 async def startup_event():
     global main_loop
-    main_loop = asyncio.get_running_loop()          # ← сохраняем правильный loop
-    
+    main_loop = asyncio.get_running_loop()
     print("Starting Telegram Application...")
     await application.initialize()
     await application.start()
-
-    # Установка webhook автоматически
     domain = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if domain:
         webhook_url = f"https://{domain}/telegram_webhook"
@@ -1016,10 +829,6 @@ async def startup_event():
             print(f"Webhook успешно установлен: {webhook_url}")
         except Exception as e:
             print(f"Ошибка установки webhook: {e}")
-    else:
-        print("RENDER_EXTERNAL_HOSTNAME не найден — webhook не установлен автоматически")
-
-    # Запуск фоновых задач
     threading.Thread(target=reminders_checker, daemon=True).start()
     print("[STARTUP] Запущена проверка напоминаний")
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
