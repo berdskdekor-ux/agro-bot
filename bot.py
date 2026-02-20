@@ -15,6 +15,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
+from geopy.geocoders import Nominatim
+from timezonefinder import TimezoneFinder
+import pytz
+from datetime import datetime, timezone
 
 main_loop = None
 
@@ -307,11 +311,27 @@ async def analyze_plantnet(file_id, region):
 def get_user_reminders(uid):
     return user_data.get(uid, {}).get("reminders", [])
 
-def save_reminder(uid, text, dt_iso):
+def save_reminder(uid, text, dt_local):
+    """
+    dt_local — это naive datetime, введённый пользователем в его локальном времени
+    """
     user = user_data.setdefault(uid, {})
+    tz_str = user.get("timezone", "UTC")
+    tz = pytz.timezone(tz_str)
+    
+    # Делаем naive → aware в локальном поясе → конвертируем в UTC
+    dt_aware_local = tz.localize(dt_local)
+    dt_utc = dt_aware_local.astimezone(pytz.UTC)
+    
     reminders = user.setdefault("reminders", [])
     new_id = max([r.get("id", 0) for r in reminders], default=0) + 1
-    reminders.append({"id": new_id, "text": text.strip(), "datetime": dt_iso, "sent": False})
+    
+    reminders.append({
+        "id": new_id,
+        "text": text.strip(),
+        "datetime_utc": dt_utc.isoformat(),   # ← храним ISO в UTC
+        "sent": False
+    })
     save_data()
 
 def delete_reminder(uid, rem_id):
@@ -490,19 +510,44 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = user_data[uid]
     state = user.get("state")
 
-    if state == STATE_WAIT_REGION:
-        region = text.strip()
-        if len(region) < 3:
-            await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
-            return
-        user["region"] = region
-        user.pop("state", None)
-        save_data()
-        await update.message.reply_text(
-            f"Отлично! Запомнил: **{region}** 🌍\nТеперь рекомендации будут учитывать ваш климат.\n\nЧто хотите сделать?",
-            reply_markup=main_keyboard(),
-            parse_mode="Markdown"
-        )
+   elif state == STATE_WAIT_REGION:
+    region = text.strip()
+    if len(region) < 3:
+        await update.message.reply_text("Название региона слишком короткое. Попробуйте ещё раз.")
+        return
+
+    # ─── Определяем timezone по названию региона/города ───
+    user_timezone = "UTC"  # fallback
+    try:
+        geolocator = Nominatim(user_agent="agro_bot")
+        location = geolocator.geocode(region, exactly_one=True, timeout=10)
+        
+        if location:
+            tf = TimezoneFinder()
+            tz_name = tf.timezone_at(lng=location.longitude, lat=location.latitude)
+            if tz_name:
+                user_timezone = tz_name
+                print(f"[TZ] Для региона '{region}' найден timezone: {tz_name}")
+            else:
+                print(f"[TZ] Не удалось найти timezone для координат {location.latitude}, {location.longitude}")
+        else:
+            print(f"[TZ] Не удалось геокодировать регион: {region}")
+            
+    except Exception as e:
+        print(f"[TZ-ERROR] {type(e).__name__}: {e}")
+
+    user["region"] = region
+    user["timezone"] = user_timezone          # ← сохраняем строку, например "Asia/Novosibirsk"
+    user.pop("state", None)
+    save_data()
+
+    await update.message.reply_text(
+        f"Отлично! Запомнил: **{region}** 🌍\n"
+        f"Часовой пояс: **{user_timezone}**\n"
+        "Теперь рекомендации и напоминания будут учитывать ваш часовой пояс.",
+        reply_markup=main_keyboard(),
+        parse_mode="Markdown"
+    )
         return
 
     if state == STATE_ADD_REM_TEXT:
@@ -536,6 +581,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Дата+время должны быть в будущем.")
                 return
             save_reminder(uid, user["temp_rem_text"], dt.isoformat())
+            tz = pytz.timezone(user.get("timezone", "UTC"))
+            local_time_str = dt.isoformat()  # если dt уже локальное
+            await update.message.reply_text(
+                f"Напоминание создано на\n{local_time_str}\n(ваш часовой пояс: {user['timezone']})"
+            )
             can_use, _ = can_use_feature(uid, "reminders")
             if not can_use and not is_premium_active(uid):
                 reminders = get_user_reminders(uid)
@@ -558,9 +608,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
     elif state == STATE_EDIT_REM_VALUE:
-        rem_id = user.get("temp_rem_id")
-        field = user.get("edit_field")
-        reminder = next((r for r in get_user_reminders(uid) if r.get("id") == rem_id), None)
+        new_dt_local = ...  # собираете новый datetime из ввода пользователя
+        tz = pytz.timezone(user.get("timezone", "UTC"))
+        new_dt_utc = tz.localize(new_dt_local).astimezone(pytz.UTC)
+        reminder["datetime_utc"] = new_dt_utc.isoformat()
         if not reminder or not field:
             await update.message.reply_text("Ошибка. Попробуйте заново.")
             user.pop("state", None)
@@ -910,51 +961,41 @@ application.add_handler(CallbackQueryHandler(callback_handler))
 def reminders_checker():
     print("[REMINDER-CHECKER] Фоновая задача запущена")
     while True:
-        try:
-            now = datetime.now()
-            print(f"[REMINDER-CHECKER] Проверка времени: {now.isoformat()}")
+        now_utc = datetime.now(pytz.UTC)
+        changed = False
+        
+        for uid_str, user in list(user_data.items()):
+            reminders = user.get("reminders", [])
+            tz_str = user.get("timezone", "UTC")
+            tz = pytz.timezone(tz_str)
             
-            changed = False
-            for uid_str, user in list(user_data.items()):
-                reminders = user.get("reminders", [])
-                if not reminders:
+            for rem in reminders:
+                if rem.get("sent"):
                     continue
                     
-                for rem in reminders:
-                    if rem.get("sent"):
-                        continue
+                try:
+                    dt_utc = datetime.fromisoformat(rem["datetime_utc"]).replace(tzinfo=pytz.UTC)
+                    
+                    if dt_utc <= now_utc:
+                        # Отправляем сообщение
+                        asyncio.run_coroutine_threadsafe(
+                            application.bot.send_message(
+                                int(uid_str),
+                                f"🔔 Напоминание!\n{rem['text']}\n\n(в вашем времени: {dt_utc.astimezone(tz).strftime('%d.%m.%Y %H:%M')})"
+                            ),
+                            main_loop
+                        )
                         
-                    try:
-                        rem_time = datetime.fromisoformat(rem["datetime"])
-                        print(f"[REMINDER-CHECKER] Проверяем напоминание {rem['id']} пользователя {uid_str}: {rem_time.isoformat()}")
+                        rem["sent"] = True
+                        changed = True
                         
-                        if rem_time <= now:
-                            print(f"[REMINDER-CHECKER] Время пришло! Отправляем пользователю {uid_str}: {rem['text']}")
-                            
-                            asyncio.run_coroutine_threadsafe(
-                                application.bot.send_message(
-                                    chat_id=int(uid_str),
-                                    text=f"🔔 Напоминание!\n{rem['text']}",
-                                    reply_markup=main_keyboard()
-                                ),
-                                main_loop
-                            ).result(timeout=8)  # ждём до 8 сек, чтобы поймать ошибку
-                            
-                            mark_reminder_sent(uid_str, rem["id"])
-                            changed = True
-                            print(f"[REMINDER-CHECKER] Напоминание {rem['id']} отправлено и помечено как sent")
-                            
-                    except Exception as e:
-                        print(f"[REMINDER-CHECKER-ERROR] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
-            
-            if changed:
-                save_data()
-                print("[REMINDER-CHECKER] Сохранены изменения после отправки")
-                
-        except Exception as outer_e:
-            print(f"[REMINDER-CHECKER-CRITICAL] Ошибка во внешнем цикле: {outer_e}")
+                except Exception as e:
+                    print(f"[REMINDER-ERROR] uid={uid_str}: {e}")
         
-        time.sleep(60)  # проверяем каждую минуту
+        if changed:
+            save_data()
+        
+        time.sleep(60)
 
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
