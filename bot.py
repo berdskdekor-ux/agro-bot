@@ -528,45 +528,35 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
-    elif state == STATE_ADD_REM_DATE:
+    elif state == STATE_ADD_REM_TIME:
         try:
-            text_clean = text.replace(" ", "").strip()
-            parts = text_clean.split(".")
-            if len(parts) < 3:
-                raise ValueError("Мало частей")
-
-            d = int(parts[0])
-            m = int(parts[1])
-            y = int(parts[2])
-
-            dt_date = datetime(y, m, d)
-            if dt_date < datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
-                await update.message.reply_text("Дата должна быть в будущем.")
+            h, mm = map(int, text.replace(" ", "").split(":"))
+            dt = user["temp_rem_date"].replace(hour=h, minute=mm)
+            if dt < datetime.now():
+                await update.message.reply_text("Дата+время должны быть в будущем.")
                 return
-
-            user["temp_rem_date"] = dt_date
-            user["state"] = STATE_ADD_REM_TIME
-            await update.message.reply_text("Укажите время: чч:мм\nПример: 14:30")
+            save_reminder(uid, user["temp_rem_text"], dt.isoformat())
+            can_use, _ = can_use_feature(uid, "reminders")
+            if not can_use and not is_premium_active(uid):
+                reminders = get_user_reminders(uid)
+                if reminders:
+                    delete_reminder(uid, max(r["id"] for r in reminders))
+                await update.message.reply_text("Лимит бесплатных напоминаний исчерпан.")
+                return
+            if not is_premium_active(uid):
+                user["reminders_created"] = user.get("reminders_created", 0) + 1
+                save_data()
+            user.pop("state", None)
+            user.pop("temp_rem_text", None)
+            user.pop("temp_rem_date", None)
             save_data()
-
-        except Exception as e:
-            print(f"[DATE-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
-            await update.message.reply_text("Неверный формат даты. Ожидается: 15.03.2026\nПопробуйте ещё раз.")
+            await update.message.reply_text(
+                f"Напоминание создано на\n{dt.strftime('%d.%m.%Y %H:%M')}\n\n{text}",
+                reply_markup=main_keyboard()
+            )
+        except:
+            await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
-             if not is_premium_active(uid):
-                 user["reminders_created"] = user.get("reminders_created", 0) + 1
-                 save_data()
-             user.pop("state", None)
-             user.pop("temp_rem_text", None)
-             user.pop("temp_rem_date", None)
-             save_data()
-             await update.message.reply_text(
-                 f"Напоминание создано на\n{dt.strftime('%d.%m.%Y %H:%M')}\n\n{text}",
-                 reply_markup=main_keyboard()
-             )
-         except:
-             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
-         return
     elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
@@ -921,43 +911,39 @@ def reminders_checker():
     print("[НАПОМИНАНИЕ-ПРОВЕРКА] Фоновая задача запущена")
     while True:
         try:
-            server_now = datetime.now()  # это UTC на Render
-            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера (UTC): {server_now.isoformat()}")
+            server_now = datetime.now()
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера: {server_now.isoformat()}")
 
             changed = False
             for uid_str, user in list(user_data.items()):
-                region_lower = user.get("region", "").lower().strip()
+                region = user.get("region", "").lower()
+                reminders = user.get("reminders", [])
+                if not reminders:
+                    continue
 
-                # Определяем примерное смещение от UTC (в часах) — только для России/СНГ
-                offset_hours = 3  # Москва, СПб, европейская часть — дефолт
-                if any(kw in region_lower for kw in ["москва", "питер", "санкт-петербург", "калининград", "мск", "utc+3"]):
-                    offset_hours = 3
-                elif any(kw in region_lower for kw in ["екатеринбург", "самара", "челябинск", "урал", "самарское", "utc+4", "+4", "екб"]):
-                    offset_hours = 4
-                elif any(kw in region_lower for kw in ["омск", "новосибирск", "красноярск", "барнаул", "сибирь", "нск", "utc+7", "+7"]):
+                # Простое определение смещения (в часах) относительно UTC
+                offset_hours = 3   # по умолчанию Москва / европейская часть
+                if any(word in region for word in ["новосибирск", "красноярск", "омск", "+7", "сибирь"]):
                     offset_hours = 7
-                elif any(kw in region_lower for kw in ["иркутск", "якутск", "чита", "бурятия", "utc+8", "+8"]):
-                    offset_hours = 8
-                elif any(kw in region_lower for kw in ["владивосток", "хабаровск", "владивостокское", "utc+10", "+10"]):
+                elif any(word in region for word in ["владивосток", "хабаровск", "+10"]):
                     offset_hours = 10
-                elif any(kw in region_lower for kw in ["камчатка", "петропавловск", "анадырь", "utc+12", "+12"]):
-                    offset_hours = 12
-                # Можно добавить Беларусь (+3), Казахстан (разные), но пока хватит
+                elif any(word in region for word in ["екатеринбург", "самара", "+5", "урал"]):
+                    offset_hours = 5
+                # можно добавить ещё 2–3 популярных пояса по необходимости
 
                 user_local_now = server_now + timedelta(hours=offset_hours)
-                print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region_lower}', предполагаемое локальное время: {user_local_now.isoformat()} (UTC+{offset_hours})")
+                print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region}', локальное время ~ {user_local_now.isoformat()}")
 
-                reminders = user.get("reminders", [])
                 for rem in reminders:
                     if rem.get("sent"):
                         continue
 
                     try:
                         rem_time = datetime.fromisoformat(rem["datetime"])
-                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Напоминание {rem['id']}: {rem_time.isoformat()}")
+                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверяем напоминание {rem['id']}: {rem_time.isoformat()}")
 
                         if rem_time <= user_local_now:
-                            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] СРАБОТАЛО для uid={uid_str}! Отправляем: {rem['text']}")
+                            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Время пришло для uid={uid_str}! Отправляем: {rem['text']}")
 
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
@@ -979,9 +965,10 @@ def reminders_checker():
                 print("[НАПОМИНАНИЕ-ПРОВЕРКА] Данные сохранены после отправки")
 
         except Exception as outer_e:
-            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] Ошибка в цикле: {outer_e}")
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] {outer_e}")
 
         time.sleep(60)
+
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
