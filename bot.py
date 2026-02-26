@@ -524,7 +524,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user["temp_rem_date"] = dt_date
             user["state"] = STATE_ADD_REM_TIME
             await update.message.reply_text("Укажите время: чч:мм\nПример: 14:30")
-            save_data()
+            save_reminder(uid, user["temp_rem_text"], dt.isoformat())
         except:
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
@@ -908,33 +908,43 @@ application.add_handler(CallbackQueryHandler(callback_handler))
 
 # ─── Фоновые задачи ───
 def reminders_checker():
-    print("[REMINDER-CHECKER] Фоновая задача запущена")
+    print("[НАПОМИНАНИЕ-ПРОВЕРКА] Фоновая задача запущена")
     while True:
         try:
-            now = datetime.now()   # ← серверное время
-            print(f"[REMINDER-CHECKER] Проверка времени: {now.isoformat()}")
-           
+            server_now = datetime.now()
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера: {server_now.isoformat()}")
+
             changed = False
             for uid_str, user in list(user_data.items()):
+                region = user.get("region", "").lower()
                 reminders = user.get("reminders", [])
                 if not reminders:
                     continue
-                   
+
+                # Простое определение смещения (в часах) относительно UTC
+                offset_hours = 3   # по умолчанию Москва / европейская часть
+                if any(word in region for word in ["новосибирск", "красноярск", "омск", "+7", "сибирь"]):
+                    offset_hours = 7
+                elif any(word in region for word in ["владивосток", "хабаровск", "+10"]):
+                    offset_hours = 10
+                elif any(word in region for word in ["екатеринбург", "самара", "+5", "урал"]):
+                    offset_hours = 5
+                # можно добавить ещё 2–3 популярных пояса по необходимости
+
+                user_local_now = server_now + timedelta(hours=offset_hours)
+                print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region}', локальное время ~ {user_local_now.isoformat()}")
+
                 for rem in reminders:
                     if rem.get("sent"):
                         continue
-                       
+
                     try:
                         rem_time = datetime.fromisoformat(rem["datetime"])
-                        # ─── Самое важное изменение ───
-                        # Считаем, что rem_time уже в локальном времени пользователя
-                        # Поэтому просто сравниваем напрямую с now сервера
-                        # (при допущении, что пользователь ввёл время в своём поясе)
-                        print(f"[REMINDER-CHECKER] Проверяем напоминание {rem['id']} пользователя {uid_str}: {rem_time.isoformat()}")
-                       
-                        if rem_time <= now:
-                            print(f"[REMINDER-CHECKER] Время пришло! Отправляем пользователю {uid_str}: {rem['text']}")
-                           
+                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверяем напоминание {rem['id']}: {rem_time.isoformat()}")
+
+                        if rem_time <= user_local_now:
+                            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Время пришло для uid={uid_str}! Отправляем: {rem['text']}")
+
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
                                     chat_id=int(uid_str),
@@ -943,21 +953,20 @@ def reminders_checker():
                                 ),
                                 main_loop
                             ).result(timeout=8)
-                           
+
                             mark_reminder_sent(uid_str, rem["id"])
                             changed = True
-                            print(f"[REMINDER-CHECKER] Напоминание {rem['id']} отправлено и помечено как sent")
-                           
+
                     except Exception as e:
-                        print(f"[REMINDER-CHECKER-ERROR] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
-           
+                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-ОШИБКА] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
+
             if changed:
                 save_data()
-                print("[REMINDER-CHECKER] Сохранены изменения после отправки")
-               
+                print("[НАПОМИНАНИЕ-ПРОВЕРКА] Данные сохранены после отправки")
+
         except Exception as outer_e:
-            print(f"[REMINDER-CHECKER-CRITICAL] Ошибка во внешнем цикле: {outer_e}")
-       
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] {outer_e}")
+
         time.sleep(60)
 
 # ─── Lifespan (startup / shutdown) ───
