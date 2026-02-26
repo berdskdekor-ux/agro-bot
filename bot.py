@@ -529,31 +529,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
      elif state == STATE_ADD_REM_DATE:
-     try:
-        # ─── Исправленный парсинг даты ───
-         text_clean = text.replace(" ", "").strip()          # убираем пробелы
-         parts = text_clean.split(".")                       # ['26','02','2026','16:35'] или ['26','02','2026']
-         if len(parts) < 3:
-             raise ValueError("Мало частей")
-        
-         d = int(parts[0])
-         m = int(parts[1])
-         y = int(parts[2])
-        
-         dt_date = datetime(y, m, d)
-         if dt_date < datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
-             await update.message.reply_text("Дата должна быть в будущем.")
+             try:
+                 # Исправленный парсинг даты — игнорируем лишнее после даты
+                 text_clean = text.replace(" ", "").strip()
+                 parts = text_clean.split(".")
+                 if len(parts) < 3:
+                     raise ValueError("Мало частей в дате")
+
+                 d = int(parts[0])
+                 m = int(parts[1])
+                 y = int(parts[2])
+
+                 dt_date = datetime(y, m, d)
+                 if dt_date < datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
+                     await update.message.reply_text("Дата должна быть в будущем.")
+                     return
+
+                 user["temp_rem_date"] = dt_date
+                 user["state"] = STATE_ADD_REM_TIME
+                 await update.message.reply_text("Укажите время: чч:мм\nПример: 14:30")
+                 save_data()
+
+             except Exception as e:
+                 print(f"[DATE-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
+                 await update.message.reply_text("Неверный формат даты. Ожидается: 15.03.2026\nПопробуйте ещё раз.")
              return
-        
-         user["temp_rem_date"] = dt_date
-         user["state"] = STATE_ADD_REM_TIME
-         await update.message.reply_text("Укажите время: чч:мм\nПример: 14:30")
-         save_data()
-        
-     except Exception as e:
-         print(f"[DATE-PARSE-ERROR] {text!r} → {type(e).__name__}: {e}")
-         await update.message.reply_text("Неверный формат даты. Ожидается: 15.03.2026\nПопробуйте ещё раз.")
-     return
              if not is_premium_active(uid):
                  user["reminders_created"] = user.get("reminders_created", 0) + 1
                  save_data()
