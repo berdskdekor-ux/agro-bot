@@ -911,39 +911,43 @@ def reminders_checker():
     print("[НАПОМИНАНИЕ-ПРОВЕРКА] Фоновая задача запущена")
     while True:
         try:
-            server_now = datetime.now()
-            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера: {server_now.isoformat()}")
+            server_now = datetime.now()  # это UTC на Render
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера (UTC): {server_now.isoformat()}")
 
             changed = False
             for uid_str, user in list(user_data.items()):
-                region = user.get("region", "").lower()
-                reminders = user.get("reminders", [])
-                if not reminders:
-                    continue
+                region_lower = user.get("region", "").lower().strip()
 
-                # Простое определение смещения (в часах) относительно UTC
-                offset_hours = 3   # по умолчанию Москва / европейская часть
-                if any(word in region for word in ["новосибирск", "красноярск", "омск", "+7", "сибирь"]):
+                # Определяем примерное смещение от UTC (в часах) — только для России/СНГ
+                offset_hours = 3  # Москва, СПб, европейская часть — дефолт
+                if any(kw in region_lower for kw in ["москва", "питер", "санкт-петербург", "калининград", "мск", "utc+3"]):
+                    offset_hours = 3
+                elif any(kw in region_lower for kw in ["екатеринбург", "самара", "челябинск", "урал", "самарское", "utc+4", "+4", "екб"]):
+                    offset_hours = 4
+                elif any(kw in region_lower for kw in ["омск", "новосибирск", "красноярск", "барнаул", "сибирь", "нск", "utc+7", "+7"]):
                     offset_hours = 7
-                elif any(word in region for word in ["владивосток", "хабаровск", "+10"]):
+                elif any(kw in region_lower for kw in ["иркутск", "якутск", "чита", "бурятия", "utc+8", "+8"]):
+                    offset_hours = 8
+                elif any(kw in region_lower for kw in ["владивосток", "хабаровск", "владивостокское", "utc+10", "+10"]):
                     offset_hours = 10
-                elif any(word in region for word in ["екатеринбург", "самара", "+5", "урал"]):
-                    offset_hours = 5
-                # можно добавить ещё 2–3 популярных пояса по необходимости
+                elif any(kw in region_lower for kw in ["камчатка", "петропавловск", "анадырь", "utc+12", "+12"]):
+                    offset_hours = 12
+                # Можно добавить Беларусь (+3), Казахстан (разные), но пока хватит
 
                 user_local_now = server_now + timedelta(hours=offset_hours)
-                print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region}', локальное время ~ {user_local_now.isoformat()}")
+                print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region_lower}', предполагаемое локальное время: {user_local_now.isoformat()} (UTC+{offset_hours})")
 
+                reminders = user.get("reminders", [])
                 for rem in reminders:
                     if rem.get("sent"):
                         continue
 
                     try:
                         rem_time = datetime.fromisoformat(rem["datetime"])
-                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверяем напоминание {rem['id']}: {rem_time.isoformat()}")
+                        print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Напоминание {rem['id']}: {rem_time.isoformat()}")
 
                         if rem_time <= user_local_now:
-                            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Время пришло для uid={uid_str}! Отправляем: {rem['text']}")
+                            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] СРАБОТАЛО для uid={uid_str}! Отправляем: {rem['text']}")
 
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
@@ -965,10 +969,9 @@ def reminders_checker():
                 print("[НАПОМИНАНИЕ-ПРОВЕРКА] Данные сохранены после отправки")
 
         except Exception as outer_e:
-            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] {outer_e}")
+            print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] Ошибка в цикле: {outer_e}")
 
         time.sleep(60)
-
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
