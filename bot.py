@@ -1,5 +1,4 @@
 # bot.py (или main.py) — полный код под FastAPI / ASGI
-
 import os
 import json
 import time
@@ -7,7 +6,6 @@ import threading
 import uuid
 from datetime import datetime, timedelta, date
 import asyncio
-
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -16,25 +14,21 @@ import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
 
-main_loop = None
-
 # ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
-YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+GROK_API_KEY = os.getenv("GROK_API_KEY")  # Новый ключ для Grok
 
 required = {
     "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
     "YOOKASSA_SHOP_ID": YOOKASSA_SHOP_ID,
     "YOOKASSA_SECRET_KEY": YOOKASSA_SECRET_KEY,
-    "YANDEX_API_KEY": YANDEX_API_KEY,
-    "YANDEX_FOLDER_ID": YANDEX_FOLDER_ID,
     "PLANTNET_API_KEY": PLANTNET_API_KEY,
     "WEATHER_API_KEY": WEATHER_API_KEY,
+    "GROK_API_KEY": GROK_API_KEY,
 }
 missing = [k for k, v in required.items() if not v]
 if missing:
@@ -45,6 +39,7 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 # ─── FastAPI приложение ───
 app = FastAPI(title="Агроном-бот", description="Telegram бот для садоводов и огородников")
+
 @app.get("/success")
 async def payment_success():
     html_content = """
@@ -178,7 +173,7 @@ def premium_expiration_checker():
                                     parse_mode="HTML",
                                     reply_markup=main_keyboard()
                                 ),
-                                main_loop
+                                asyncio.get_running_loop()
                             )
                     except Exception:
                         # на случай битой даты
@@ -188,26 +183,32 @@ def premium_expiration_checker():
         if changed:
             save_data()
             print("Обновлены статусы премиум-доступа")
-        time.sleep(300)   # 5 минут
-# ─── YandexGPT ───
-def ask_yandexgpt(region, question):
+        time.sleep(300)  # 5 минут
+
+# ─── Grok API ───
+def ask_grok(region, question):
     try:
-        url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-        headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}", "Content-Type": "application/json"}
-        data = {
-            "modelUri": f"gpt://{YANDEX_FOLDER_ID}/yandexgpt-lite",
-            "completionOptions": {"stream": False, "temperature": 0.75, "maxTokens": 1200},
-            "messages": [
-                {"role": "system", "text": f"Ты агроном-консультант. Регион: {region}. Отвечай на русском, пошагово, понятно."},
-                {"role": "user", "text": question}
-            ]
+        url = "https://api.x.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROK_API_KEY}",
+            "Content-Type": "application/json"
         }
-        response = requests.post(url, headers=headers, json=data, timeout=15)
+        data = {
+            "model": "grok-4-1-fast-reasoning",  # Или "grok-4" для мультимодала, если нужно
+            "messages": [
+                {"role": "system", "content": f"Ты агроном-консультант. Регион: {region}. Отвечай на русском, пошагово, понятно."},
+                {"role": "user", "content": question}
+            ],
+            "temperature": 0.75,
+            "max_tokens": 1200,
+            "stream": False
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=60)  # Длинный timeout
         response.raise_for_status()
-        return response.json()["result"]["alternatives"][0]["message"]["text"].strip()
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print(f"YandexGPT FAIL: {type(e).__name__}: {str(e)}")
-        return f"Ошибка YandexGPT: {str(e)}. Попробуй спросить проще или позже."
+        print(f"Grok API FAIL: {type(e).__name__}: {str(e)}")
+        return f"Ошибка Grok API: {str(e)}. Попробуй спросить проще или позже."
 
 # ─── Погода ───
 def get_week_weather(city):
@@ -233,43 +234,34 @@ def get_week_weather(city):
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
     """
-    Анализирует фотографию растения через PlantNet + YandexGPT.
+    Анализирует фотографию растения через PlantNet + Grok.
     Возвращает текстовый результат или сообщение об ошибке.
     """
     temp_path = f"temp_plant_{uuid.uuid4().hex[:8]}.jpg"
     try:
         print(f"[PLANTNET] Начинаем обработку фото, file_id={file_id}, region={region}")
-
         # 1. Получаем объект File из Telegram
         file_obj = await application.bot.get_file(file_id)
         print(f"[PLANTNET] Получен File объект, file_path={file_obj.file_path}")
-
         # 2. Скачиваем фото в память (bytearray)
         photo_bytes = await file_obj.download_as_bytearray()
         print(f"[PLANTNET] Фото скачано, размер: {len(photo_bytes)} байт")
-
         # 3. Сохраняем на диск для отправки в PlantNet
         with open(temp_path, "wb") as f:
             f.write(photo_bytes)
         print(f"[PLANTNET] Фото сохранено во временный файл: {temp_path}")
-
         # 4. Отправляем в PlantNet API
         url = "https://my-api.plantnet.org/v2/identify/all"
         params = {"api-key": PLANTNET_API_KEY, "lang": "ru"}
-
         with open(temp_path, 'rb') as img_file:
             files = {'images': ('photo.jpg', img_file, 'image/jpeg')}
             response = requests.post(url, files=files, params=params, timeout=30)
-
         print(f"[PLANTNET] Ответ от API: status={response.status_code}")
-
         if response.status_code != 200:
             return f"Pl@ntNet вернул ошибку {response.status_code}: {response.text[:200]}"
-
         data = response.json()
         if "results" not in data or not data["results"]:
             return "Растение не распознано. Попробуйте фото крупнее / чётче / с другого ракурса."
-
         best = data["results"][0]
         species = best["species"]
         sci_name = species.get("scientificNameWithoutAuthor", "—")
@@ -277,24 +269,19 @@ async def analyze_plantnet(file_id, region):
         common_names = species.get("commonNames", [])
         common_str = ", ".join(common_names[:3]) if common_names else "—"
         score = best["score"] * 100
-
         desc = f"**{sci_name}**\nСемейство: {family}\nНародные названия: {common_str}\nУверенность: {score:.1f}%"
-
-        # Запрос к YandexGPT с информацией о растении
+        # Запрос к Grok с информацией о растении
         prompt = (
             f"Растение: {sci_name} ({family}). Вероятность {score:.0f}%. "
             f"Возможные болезни, вредители? Дай 2–3 совета по уходу в регионе {region}."
         )
-        gpt_advice = ask_yandexgpt(region, prompt)
-
-        result = f"Анализ фото:\n{desc}\n\n{gpt_advice}"
+        grok_advice = ask_grok(region, prompt)
+        result = f"Анализ фото:\n{desc}\n\n{grok_advice}"
         return result
-
     except Exception as e:
         error_text = f"Ошибка анализа: {type(e).__name__}: {str(e)}"
         print(f"[PLANTNET-ERROR] {error_text}")
         return error_text + "\n\nПопробуйте отправить другое фото или повторить позже."
-
     finally:
         # Удаляем временный файл в любом случае
         if os.path.exists(temp_path):
@@ -303,6 +290,7 @@ async def analyze_plantnet(file_id, region):
                 print(f"[PLANTNET] Временный файл удалён: {temp_path}")
             except Exception as cleanup_e:
                 print(f"[PLANTNET-CLEANUP] Не удалось удалить {temp_path}: {cleanup_e}")
+
 # ─── Напоминания ───
 def get_user_reminders(uid):
     return user_data.get(uid, {}).get("reminders", [])
@@ -424,7 +412,7 @@ async def yookassa_webhook(request: Request):
                 parse_mode="HTML",
                 reply_markup=main_keyboard()
             ),
-            main_loop
+            asyncio.get_running_loop()
         )
         return PlainTextResponse("", status_code=200)
     except Exception as e:
@@ -449,6 +437,7 @@ async def telegram_webhook(request: Request):
 @app.get("/health")
 async def health_check():
     return {"status": "OK"}
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -489,7 +478,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user = user_data[uid]
     state = user.get("state")
-
     if state == STATE_WAIT_REGION:
         region = text.strip()
         if len(region) < 3:
@@ -504,7 +492,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
-
     if state == STATE_ADD_REM_TEXT:
         if not text.strip():
             await update.message.reply_text("Текст не может быть пустым.")
@@ -535,7 +522,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[DATE-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
             await update.message.reply_text("Неверный формат даты. Ожидается: 15.03.2026\nПопробуйте ещё раз.")
         return
-
     elif state == STATE_ADD_REM_TIME:
         try:
             h, mm = map(int, text.replace(" ", "").split(":"))
@@ -566,7 +552,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[TIME-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
-
     elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
@@ -576,13 +561,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.pop("state", None)
             save_data()
             return
-
         dt = datetime.fromisoformat(reminder["datetime"])
-
         try:
             if field == "text":
                 reminder["text"] = text.strip()
-
             elif field == "date":
                 d, m, y = map(int, text.replace(" ", "").split("."))
                 new_dt = datetime(y, m, d, dt.hour, dt.minute)
@@ -590,7 +572,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("Дата должна быть в будущем.")
                     return
                 reminder["datetime"] = new_dt.isoformat()
-
             elif field == "time":
                 h, mm = map(int, text.replace(" ", "").split(":"))
                 new_dt = dt.replace(hour=h, minute=mm)
@@ -598,24 +579,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("Время должно быть в будущем.")
                     return
                 reminder["datetime"] = new_dt.isoformat()
-
             # Сбрасываем статус отправки при изменении даты/времени
             if field in ("date", "time"):
                 reminder["sent"] = False
-
             save_data()
             await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
-
         except Exception as e:
             print(f"[EDIT-ERROR] uid={uid}, rem_id={rem_id}, field={field}: {type(e).__name__}: {e}")
             await update.message.reply_text(f"Ошибка формата: {str(e)}")
-
         finally:
             user.pop("state", None)
             user.pop("temp_rem_id", None)
             user.pop("edit_field", None)
             save_data()
-
         return
     text_lower = text.lower()
     if text == "🌦 Погода":
@@ -694,7 +670,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Укажи **запрещённые дни** (новолуние, полнолуние). "
             f"Формат: **{culture_clean} в 2026 году**\nЯнварь: ...\nЗапрещённые дни: ...\nКороткий совет."
         )
-        answer = ask_yandexgpt(region, prompt)
+        answer = ask_grok(region, prompt)
         if len(answer.strip()) < 80 or "не знаю" in answer.lower():
             answer = f"Для **{culture_clean}** в 2026 году точные даты зависят от сорта и региона. Уточни!"
         await update.message.reply_text(answer, reply_markup=main_keyboard())
@@ -730,7 +706,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_premium_active(uid):
             user["gpt_queries"] = user.get("gpt_queries", 0) + 1
             save_data()
-        answer = ask_yandexgpt(user.get("region", "Moscow"), text)
+        answer = ask_grok(user.get("region", "Moscow"), text)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -739,7 +715,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(query.from_user.id)
     user = user_data.setdefault(uid, {})
     data = query.data
-
     if data == "rem_add":
         user["state"] = STATE_ADD_REM_TEXT
         user.pop("temp_rem_id", None)
@@ -867,7 +842,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reminder_inline_keyboard()
         )
     elif data.startswith("premium_"):
-        plan = data.split("_")[1]  # ← здесь отступ 8 пробелов (или 2 таба), если выше функция с 4
+        plan = data.split("_")[1]
         
         # ДЕБАГ
         print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
@@ -922,6 +897,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import traceback
             print(traceback.format_exc())
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
+
 # ─── Добавляем handlers ───
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -935,16 +911,14 @@ def reminders_checker():
         try:
             server_now = datetime.now()
             print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверка времени сервера: {server_now.isoformat()}")
-
             changed = False
             for uid_str, user in list(user_data.items()):
                 region = user.get("region", "").lower()
                 reminders = user.get("reminders", [])
                 if not reminders:
                     continue
-
                 # Простое определение смещения (в часах) относительно UTC
-                offset_hours = 3   # по умолчанию Москва / европейская часть
+                offset_hours = 3  # по умолчанию Москва / европейская часть
                 if any(word in region for word in ["новосибирск", "красноярск", "омск", "+7", "сибирь"]):
                     offset_hours = 7
                 elif any(word in region for word in ["владивосток", "хабаровск", "+10"]):
@@ -952,54 +926,41 @@ def reminders_checker():
                 elif any(word in region for word in ["екатеринбург", "самара", "+5", "урал"]):
                     offset_hours = 5
                 # можно добавить ещё 2–3 популярных пояса по необходимости
-
                 user_local_now = server_now + timedelta(hours=offset_hours)
                 print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] uid={uid_str}, регион='{region}', локальное время ~ {user_local_now.isoformat()}")
-
                 for rem in reminders:
                     if rem.get("sent"):
                         continue
-
                     try:
                         rem_time = datetime.fromisoformat(rem["datetime"])
                         print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверяем напоминание {rem['id']}: {rem_time.isoformat()}")
-
                         if rem_time <= user_local_now:
                             print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Время пришло для uid={uid_str}! Отправляем: {rem['text']}")
-
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
                                     chat_id=int(uid_str),
                                     text=f"🔔 Напоминание!\n{rem['text']}",
                                     reply_markup=main_keyboard()
                                 ),
-                                main_loop
+                                asyncio.get_running_loop()
                             ).result(timeout=8)
-
                             mark_reminder_sent(uid_str, rem["id"])
                             changed = True
-
                     except Exception as e:
                         print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-ОШИБКА] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
-
             if changed:
                 save_data()
                 print("[НАПОМИНАНИЕ-ПРОВЕРКА] Данные сохранены после отправки")
-
         except Exception as outer_e:
             print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] {outer_e}")
-
         time.sleep(60)
+
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
-    global main_loop
-    main_loop = asyncio.get_running_loop()          # ← сохраняем правильный loop
-    
     print("Starting Telegram Application...")
     await application.initialize()
     await application.start()
-
     # Установка webhook автоматически
     domain = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if domain:
@@ -1011,7 +972,6 @@ async def startup_event():
             print(f"Ошибка установки webhook: {e}")
     else:
         print("RENDER_EXTERNAL_HOSTNAME не найден — webhook не установлен автоматически")
-
     # Запуск фоновых задач
     threading.Thread(target=reminders_checker, daemon=True).start()
     print("[STARTUP] Запущена проверка напоминаний")
