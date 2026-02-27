@@ -528,7 +528,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
         return
-    elif state == STATE_ADD_REM_TIME:
+        elif state == STATE_ADD_REM_TIME:
         try:
             h, mm = map(int, text.replace(" ", "").split(":"))
             dt = user["temp_rem_date"].replace(hour=h, minute=mm)
@@ -557,7 +557,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
-        elif state == STATE_EDIT_REM_VALUE:
+
+    elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
         reminder = next((r for r in get_user_reminders(uid) if r.get("id") == rem_id), None)
@@ -589,7 +590,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 reminder["datetime"] = new_dt.isoformat()
 
-            # Сбрасываем флаг sent, если изменили дату или время
+            # Сбрасываем статус отправки при изменении даты/времени
             if field in ("date", "time"):
                 reminder["sent"] = False
 
@@ -606,7 +607,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data()
 
         return
-
     text_lower = text.lower()
     if text == "🌦 Погода":
         answer = get_week_weather(user.get("region", "Moscow"))
