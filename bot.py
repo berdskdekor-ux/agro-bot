@@ -911,26 +911,30 @@ def reminders_checker():
     print("[REMINDER-CHECKER] Фоновая задача запущена")
     while True:
         try:
-            now = datetime.now()
+            now = datetime.now()   # ← серверное время
             print(f"[REMINDER-CHECKER] Проверка времени: {now.isoformat()}")
-            
+           
             changed = False
             for uid_str, user in list(user_data.items()):
                 reminders = user.get("reminders", [])
                 if not reminders:
                     continue
-                    
+                   
                 for rem in reminders:
                     if rem.get("sent"):
                         continue
-                        
+                       
                     try:
                         rem_time = datetime.fromisoformat(rem["datetime"])
+                        # ─── Самое важное изменение ───
+                        # Считаем, что rem_time уже в локальном времени пользователя
+                        # Поэтому просто сравниваем напрямую с now сервера
+                        # (при допущении, что пользователь ввёл время в своём поясе)
                         print(f"[REMINDER-CHECKER] Проверяем напоминание {rem['id']} пользователя {uid_str}: {rem_time.isoformat()}")
-                        
+                       
                         if rem_time <= now:
                             print(f"[REMINDER-CHECKER] Время пришло! Отправляем пользователю {uid_str}: {rem['text']}")
-                            
+                           
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.send_message(
                                     chat_id=int(uid_str),
@@ -938,24 +942,23 @@ def reminders_checker():
                                     reply_markup=main_keyboard()
                                 ),
                                 main_loop
-                            ).result(timeout=8)  # ждём до 8 сек, чтобы поймать ошибку
-                            
+                            ).result(timeout=8)
+                           
                             mark_reminder_sent(uid_str, rem["id"])
                             changed = True
                             print(f"[REMINDER-CHECKER] Напоминание {rem['id']} отправлено и помечено как sent")
-                            
+                           
                     except Exception as e:
                         print(f"[REMINDER-CHECKER-ERROR] uid={uid_str}, rem_id={rem.get('id')}: {type(e).__name__}: {e}")
-            
+           
             if changed:
                 save_data()
                 print("[REMINDER-CHECKER] Сохранены изменения после отправки")
-                
+               
         except Exception as outer_e:
             print(f"[REMINDER-CHECKER-CRITICAL] Ошибка во внешнем цикле: {outer_e}")
-        
-        time.sleep(60)  # проверяем каждую минуту
-
+       
+        time.sleep(60)
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
