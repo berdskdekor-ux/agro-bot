@@ -986,3 +986,4 @@ async def shutdown_event():
     print("Telegram Application остановлен")
 
 print("Приложение готово к запуску под uvicorn / FastAPI")
+
