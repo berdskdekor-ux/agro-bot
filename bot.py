@@ -557,7 +557,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
-    elif state == STATE_EDIT_REM_VALUE:
+        elif state == STATE_EDIT_REM_VALUE:
         rem_id = user.get("temp_rem_id")
         field = user.get("edit_field")
         reminder = next((r for r in get_user_reminders(uid) if r.get("id") == rem_id), None)
@@ -566,10 +566,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.pop("state", None)
             save_data()
             return
+
         dt = datetime.fromisoformat(reminder["datetime"])
+
         try:
             if field == "text":
                 reminder["text"] = text.strip()
+
             elif field == "date":
                 d, m, y = map(int, text.replace(" ", "").split("."))
                 new_dt = datetime(y, m, d, dt.hour, dt.minute)
@@ -577,23 +580,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("Дата должна быть в будущем.")
                     return
                 reminder["datetime"] = new_dt.isoformat()
-            elif field == "time":
-                h, mm = map(int, text.replace(" ", "").split(":"))
-                new_dt = dt.replace(hour=h, minute=mm)
-                if new_dt < datetime.now():
-                    await update.message.reply_text("Время должно быть в будущем.")
-                    return
-                reminder["datetime"] = new_dt.isoformat()
-try:
-            if field == "text":
-                reminder["text"] = text.strip()
-            elif field == "date":
-                d, m, y = map(int, text.replace(" ", "").split("."))
-                new_dt = datetime(y, m, d, dt.hour, dt.minute)
-                if new_dt < datetime.now():
-                    await update.message.reply_text("Дата должна быть в будущем.")
-                    return
-                reminder["datetime"] = new_dt.isoformat()
+
             elif field == "time":
                 h, mm = map(int, text.replace(" ", "").split(":"))
                 new_dt = dt.replace(hour=h, minute=mm)
@@ -602,24 +589,22 @@ try:
                     return
                 reminder["datetime"] = new_dt.isoformat()
 
-            # ─── Самое важное добавление ───
+            # Сбрасываем флаг sent, если изменили дату или время
             if field in ("date", "time"):
-                reminder["sent"] = False   # сбрасываем статус отправки, если изменили время/дату
+                reminder["sent"] = False
 
             save_data()
             await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
 
         except Exception as e:
             await update.message.reply_text(f"Ошибка формата: {str(e)}")
-            save_data()
-            await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
-        except Exception as e:
-            await update.message.reply_text(f"Ошибка формата: {str(e)}")
+
         finally:
             user.pop("state", None)
             user.pop("temp_rem_id", None)
             user.pop("edit_field", None)
             save_data()
+
         return
 
     text_lower = text.lower()
