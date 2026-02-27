@@ -514,7 +514,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Укажите дату: дд.мм.гггг\nПример: 15.03.2026")
         save_data()
         return
-        elif state == STATE_ADD_REM_DATE:
+    elif state == STATE_ADD_REM_DATE:
         try:
             text_clean = text.replace(" ", "").strip()
             parts = text_clean.split(".")
