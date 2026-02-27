@@ -584,6 +584,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("Время должно быть в будущем.")
                     return
                 reminder["datetime"] = new_dt.isoformat()
+                        try:
+            if field == "text":
+                reminder["text"] = text.strip()
+            elif field == "date":
+                d, m, y = map(int, text.replace(" ", "").split("."))
+                new_dt = datetime(y, m, d, dt.hour, dt.minute)
+                if new_dt < datetime.now():
+                    await update.message.reply_text("Дата должна быть в будущем.")
+                    return
+                reminder["datetime"] = new_dt.isoformat()
+            elif field == "time":
+                h, mm = map(int, text.replace(" ", "").split(":"))
+                new_dt = dt.replace(hour=h, minute=mm)
+                if new_dt < datetime.now():
+                    await update.message.reply_text("Время должно быть в будущем.")
+                    return
+                reminder["datetime"] = new_dt.isoformat()
+
+            # ─── Самое важное добавление ───
+            if field in ("date", "time"):
+                reminder["sent"] = False   # сбрасываем статус отправки, если изменили время/дату
+
+            save_data()
+            await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
+
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка формата: {str(e)}")
             save_data()
             await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
         except Exception as e:
