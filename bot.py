@@ -514,9 +514,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Укажите дату: дд.мм.гггг\nПример: 15.03.2026")
         save_data()
         return
-    elif state == STATE_ADD_REM_DATE:
+        elif state == STATE_ADD_REM_DATE:
         try:
-            d, m, y = map(int, text.replace(" ", "").split("."))
+            text_clean = text.replace(" ", "").strip()
+            parts = text_clean.split(".")
+            if len(parts) < 3:
+                raise ValueError("Мало частей")
+            d = int(parts[0])
+            m = int(parts[1])
+            y = int(parts[2])
             dt_date = datetime(y, m, d)
             if dt_date < datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
                 await update.message.reply_text("Дата должна быть в будущем.")
@@ -525,10 +531,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user["state"] = STATE_ADD_REM_TIME
             await update.message.reply_text("Укажите время: чч:мм\nПример: 14:30")
             save_data()
-        except:
-            await update.message.reply_text("Неверный формат. Ожидается: 15.03.2026")
+        except Exception as e:
+            print(f"[DATE-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
+            await update.message.reply_text("Неверный формат даты. Ожидается: 15.03.2026\nПопробуйте ещё раз.")
         return
-        elif state == STATE_ADD_REM_TIME:
+
+    elif state == STATE_ADD_REM_TIME:
         try:
             h, mm = map(int, text.replace(" ", "").split(":"))
             dt = user["temp_rem_date"].replace(hour=h, minute=mm)
@@ -554,7 +562,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Напоминание создано на\n{dt.strftime('%d.%m.%Y %H:%M')}\n\n{text}",
                 reply_markup=main_keyboard()
             )
-        except:
+        except Exception as e:
+            print(f"[TIME-PARSE-ERROR] Ввод: {text!r} → {type(e).__name__}: {e}")
             await update.message.reply_text("Неверный формат времени. Пример: 14:30")
         return
 
@@ -598,6 +607,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Значение обновлено ✓", reply_markup=main_keyboard())
 
         except Exception as e:
+            print(f"[EDIT-ERROR] uid={uid}, rem_id={rem_id}, field={field}: {type(e).__name__}: {e}")
             await update.message.reply_text(f"Ошибка формата: {str(e)}")
 
         finally:
