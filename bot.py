@@ -584,7 +584,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("Время должно быть в будущем.")
                     return
                 reminder["datetime"] = new_dt.isoformat()
-                        try:
+try:
             if field == "text":
                 reminder["text"] = text.strip()
             elif field == "date":
