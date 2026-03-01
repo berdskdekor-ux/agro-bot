@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import requests
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
-main_loop = asyncio.get_event_loop()
+
 # ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
@@ -36,8 +36,10 @@ if missing:
     raise ValueError(f"Отсутствуют обязательные переменные: {', '.join(missing)}")
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
+
 # ─── FastAPI приложение ───
 app = FastAPI(title="Агроном-бот", description="Telegram бот для садоводов и огородников")
+
 @app.get("/success")
 async def payment_success():
     html_content = """
@@ -52,8 +54,10 @@ async def payment_success():
     </html>
     """
     return HTMLResponse(content=html_content, status_code=200)
+
 # ─── Telegram Application ───
 application = Application.builder().token(TELEGRAM_TOKEN).build()
+
 # ─── ДАННЫЕ ───
 DATA_FILE = "data.json"
 user_data = {}
@@ -69,15 +73,19 @@ STATE_ADD_REM_TIME = "add_rem_time"
 STATE_EDIT_REM_CHOOSE = "edit_rem_choose"
 STATE_EDIT_REM_VALUE = "edit_rem_value"
 STATE_WAIT_OTHER_CULTURE = "wait_other_culture"
-# ─── Категории культур ───
+STATE_CATEGORY_SELECT = "category_select"
+STATE_CULTURE_SELECT = "culture_select"
+
+# ─── Категории культур с эмодзи ───
 CATEGORIES = {
-    "Овощи": ["Томаты", "Огурцы", "Перец", "Капуста", "Морковь", "Свёкла", "Картофель", "Лук", "Чеснок", "Баклажаны", "Кабачки"],
-    "Фрукты": ["Клубника", "Малина", "Арбуз", "Дыня", "Яблоки", "Груши", "Вишня"],
-    "Цветы": ["Петуния", "Бархатцы", "Розы", "Лилии", "Астры"],
-    "Кустарники, плодовые деревья": ["Смородина", "Крыжовник", "Малина", "Виноград", "Яблоня", "Груша"],
-    "Другие культуры": []
+    "🥦 Овощи": ["🍅 Томаты", "🥒 Огурцы", "🌶 Перец", "🥬 Капуста", "🥕 Морковь", "🍠 Свёкла", "🥔 Картофель", "🧅 Лук", "🧄 Чеснок", "🍆 Баклажаны", "🥒 Кабачки"],
+    "🍎 Фрукты": ["🍓 Клубника", "🍇 Малина", "🍉 Арбуз", "🍈 Дыня", "🍏 Яблоки", "🍐 Груши", "🍒 Вишня"],
+    "🌸 Цветы": ["🌺 Петуния", "🌼 Бархатцы", "🌹 Розы", "🌷 Лилии", "🌻 Астры"],
+    "🌳 Кустарники, плодовые деревья": ["🍇 Смородина", "🫐 Крыжовник", "🍇 Малина", "🍇 Виноград", "🌳 Яблоня", "🌳 Груша"],
+    "🌿 Другие культуры": []
 }
-ALL_CULTURES = [c for cats in CATEGORIES.values() for c in cats]
+ALL_CULTURES = [c.split(" ", 1)[1] if " " in c else c for cats in CATEGORIES.values() for c in cats]  # Извлекаем чистые названия без эмодзи
+
 # ─── Загрузка / сохранение ───
 def load_data():
     global user_data
@@ -91,6 +99,7 @@ def load_data():
             user_data = {}
     else:
         user_data = {}
+
 def save_data():
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -98,7 +107,9 @@ def save_data():
         print("Данные сохранены")
     except Exception as e:
         print(f"Ошибка сохранения: {e}")
+
 load_data()
+
 # ─── Проверка лимитов ───
 def can_use_feature(uid: str, feature: str) -> tuple[bool, int]:
     user = user_data.setdefault(uid, {})
@@ -118,6 +129,7 @@ def can_use_feature(uid: str, feature: str) -> tuple[bool, int]:
         return False, 0
     remaining = max_count - count - 1
     return True, max(0, remaining)
+
 def use_feature(uid: str, feature: str):
     if is_premium_active(uid):
         return
@@ -126,6 +138,7 @@ def use_feature(uid: str, feature: str):
     user[f"{feature}_last_date"] = today
     user[f"{feature}_count"] = user.get(f"{feature}_count", 0) + 1
     save_data()
+
 # ─── Премиум ───
 def is_premium_active(uid: str) -> bool:
     user = user_data.get(uid, {})
@@ -139,6 +152,7 @@ def is_premium_active(uid: str) -> bool:
         return datetime.now() < until
     except:
         return False
+
 def premium_expiration_checker():
     while True:
         now = datetime.now()
@@ -153,8 +167,8 @@ def premium_expiration_checker():
                             user["premium"] = False
                             user.pop("premium_until", None)
                             changed = True
-                            save_data()  # Сохраняем после каждого изменения
-                           
+                            save_data() # Сохраняем после каждого изменения
+                          
                             # ─── Улучшенное уведомление об окончании ───
                             expire_msg = (
                                 "⚠️ <b>Премиум-доступ закончился</b>\n\n"
@@ -165,15 +179,12 @@ def premium_expiration_checker():
                                 "• 1 напоминание\n\n"
                                 "Хочешь вернуть безлимит? Нажми «💎 Премиум» в меню!"
                             )
-                           
-                            asyncio.run_coroutine_threadsafe(
-                                application.bot.send_message(
-                                    int(uid_str),
-                                    expire_msg,
-                                    parse_mode="HTML",
-                                    reply_markup=main_keyboard()
-                                ),
-                                main_loop
+                          
+                            application.bot.send_message(
+                                int(uid_str),
+                                expire_msg,
+                                parse_mode="HTML",
+                                reply_markup=main_keyboard()
                             )
                     except Exception:
                         # на случай битой даты
@@ -184,6 +195,7 @@ def premium_expiration_checker():
         if changed:
             print("Обновлены статусы премиум-доступа")
         time.sleep(300) # 5 минут
+
 # ─── YandexGPT ───
 def ask_yandexgpt(region, question):
     try:
@@ -203,6 +215,7 @@ def ask_yandexgpt(region, question):
     except Exception as e:
         print(f"YandexGPT FAIL: {type(e).__name__}: {str(e)}")
         return f"Ошибка YandexGPT: {str(e)}. Попробуй спросить проще или позже."
+
 # ─── Погода ───
 def get_week_weather(city):
     try:
@@ -223,6 +236,7 @@ def get_week_weather(city):
         return "\n".join(lines)
     except Exception as e:
         return f"Ошибка погоды: {str(e)}"
+
 # ─── PlantNet ───
 async def analyze_plantnet(file_id, region):
     """
@@ -285,15 +299,18 @@ async def analyze_plantnet(file_id, region):
                 print(f"[PLANTNET] Временный файл удалён: {temp_path}")
             except Exception as cleanup_e:
                 print(f"[PLANTNET-CLEANUP] Не удалось удалить {temp_path}: {cleanup_e}")
+
 # ─── Напоминания ───
 def get_user_reminders(uid):
     return user_data.get(uid, {}).get("reminders", [])
+
 def save_reminder(uid, text, dt_iso):
     user = user_data.setdefault(uid, {})
     reminders = user.setdefault("reminders", [])
     new_id = max([r.get("id", 0) for r in reminders], default=0) + 1
     reminders.append({"id": new_id, "text": text.strip(), "datetime": dt_iso, "sent": False})
     save_data()
+
 def delete_reminder(uid, rem_id):
     user = user_data.get(uid, {})
     if "reminders" not in user:
@@ -304,6 +321,7 @@ def delete_reminder(uid, rem_id):
         save_data()
         return True
     return False
+
 def mark_reminder_sent(uid, rem_id):
     user = user_data.get(uid, {})
     for r in user.get("reminders", []):
@@ -312,6 +330,7 @@ def mark_reminder_sent(uid, rem_id):
             save_data()
             return True
     return False
+
 # ─── Клавиатуры ───
 def main_keyboard():
     keyboard = [
@@ -320,6 +339,7 @@ def main_keyboard():
         [KeyboardButton("📅 Календарь посадок")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def reminder_inline_keyboard():
     keyboard = [
         [InlineKeyboardButton("➕ Добавить напоминание", callback_data="rem_add")],
@@ -327,6 +347,7 @@ def reminder_inline_keyboard():
         [InlineKeyboardButton("✏️ Редактировать / Удалить", callback_data="rem_edit_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 def edit_reminder_actions_markup(rem_id):
     keyboard = [
         [InlineKeyboardButton("✏️ Изменить текст", callback_data=f"edit_text_{rem_id}")],
@@ -336,6 +357,7 @@ def edit_reminder_actions_markup(rem_id):
         [InlineKeyboardButton("← Назад к списку", callback_data="rem_list")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 def premium_inline_keyboard():
     keyboard = [
         [InlineKeyboardButton("🟡 День — 10 ₽", callback_data="premium_day")],
@@ -345,20 +367,25 @@ def premium_inline_keyboard():
         [InlineKeyboardButton("⬅️ Назад", callback_data="premium_back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 def category_keyboard():
     cats = list(CATEGORIES.keys())
     keyboard = []
     for i in range(0, len(cats), 2):
         row = [KeyboardButton(c) for c in cats[i:i+2]]
         keyboard.append(row)
+    keyboard.append([KeyboardButton("⬅️ Назад")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def submenu_keyboard(category):
     cultures = CATEGORIES.get(category, [])
     keyboard = []
     for i in range(0, len(cultures), 3):
         row = [KeyboardButton(c) for c in cultures[i:i+3]]
         keyboard.append(row)
+    keyboard.append([KeyboardButton("⬅️ Назад")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # ─── YooKassa webhook ───
 @app.post("/yookassa-webhook")
 async def yookassa_webhook(request: Request):
@@ -378,12 +405,12 @@ async def yookassa_webhook(request: Request):
                 days = days_map.get(plan, 30)
                 now = datetime.now()
                 until = now + timedelta(days=days)
-               
+              
                 user = user_data.setdefault(str(uid), {})
                 user["premium"] = True
                 user["premium_until"] = until.isoformat()
                 save_data()
-               
+              
                 success_msg = (
                     "🎉 <b>Оплата прошла успешно!</b>\n\n"
                     f"💎 Премиум-доступ активирован до {until.strftime('%d.%m.%Y %H:%M')}\n"
@@ -393,20 +420,18 @@ async def yookassa_webhook(request: Request):
                     "• безлимитные напоминания\n\n"
                     "Спасибо, что поддерживаешь проект 🌱"
                 )
-       
-        asyncio.run_coroutine_threadsafe(
-            application.bot.send_message(
-                uid,
-                success_msg,
-                parse_mode="HTML",
-                reply_markup=main_keyboard()
-            ),
-            main_loop
+      
+        application.bot.send_message(
+            uid,
+            success_msg,
+            parse_mode="HTML",
+            reply_markup=main_keyboard()
         )
         return PlainTextResponse("", status_code=200)
     except Exception as e:
         print(f"Webhook error: {e}")
         return PlainTextResponse("", status_code=200)
+
 # ─── Telegram webhook ───
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
@@ -420,10 +445,12 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         print(f"Ошибка process_update: {e}")
         return {}
+
 # ─── Health check ───
 @app.get("/health")
 async def health_check():
     return {"status": "OK"}
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data:
@@ -441,6 +468,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user["state"] = STATE_WAIT_REGION
         save_data()
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if uid not in user_data or "region" not in user_data[uid]:
@@ -454,6 +482,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1].file_id
     analysis = await analyze_plantnet(photo, user_data[uid].get("region", "Москва"))
     await update.message.reply_text(analysis, reply_markup=main_keyboard())
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text.strip() if update.message.text else ""
@@ -462,6 +491,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user = user_data[uid]
     state = user.get("state")
+
     if state == STATE_WAIT_REGION:
         region = text.strip()
         if len(region) < 3:
@@ -476,6 +506,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
+
     if state == STATE_ADD_REM_TEXT:
         if not text.strip():
             await update.message.reply_text("Текст не может быть пустым.")
@@ -600,7 +631,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user.pop("state", None)
         save_data()
         return
+
     text_lower = text.lower()
+
+    if text == "⬅️ Назад":
+        if state == STATE_CATEGORY_SELECT:
+            user.pop("state", None)
+            await update.message.reply_text("Возвращаемся в главное меню.", reply_markup=main_keyboard())
+        elif state == STATE_CULTURE_SELECT:
+            user["state"] = STATE_CATEGORY_SELECT
+            await update.message.reply_text("Возвращаемся к выбору категории:", reply_markup=category_keyboard())
+        elif state == STATE_WAIT_OTHER_CULTURE:
+            user["state"] = STATE_CATEGORY_SELECT
+            await update.message.reply_text("Возвращаемся к выбору категории:", reply_markup=category_keyboard())
+        save_data()
+        return
+
     if text == "🌦 Погода":
         answer = get_week_weather(user.get("region", "Moscow"))
         await update.message.reply_text(answer, reply_markup=main_keyboard())
@@ -638,9 +684,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=category_keyboard(),
             parse_mode="Markdown"
         )
+        user["state"] = STATE_CATEGORY_SELECT
+        save_data()
         return
     elif text in CATEGORIES:
-        if text == "Другие культуры":
+        if text == "🌿 Другие культуры":
             user["state"] = STATE_WAIT_OTHER_CULTURE
             await update.message.reply_text(
                 "Напишите название интересующей вас культуры и я постараюсь найти о ней информацию",
@@ -653,9 +701,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Выберите культуру из категории '{text}':",
                 reply_markup=submenu_keyboard(text)
             )
+            user["state"] = STATE_CULTURE_SELECT
+            user["current_category"] = text
+            save_data()
             return
-    elif text in ALL_CULTURES:
-        culture = text
+    elif any(c.split(" ", 1)[1] if " " in c else c == text for cats in CATEGORIES.values() for c in cats):  # Проверяем чистое название
+        culture = text.split(" ", 1)[1] if " " in text else text  # Извлекаем чистое название
         year = datetime.now().year
         region = user.get("region", "Москва")
         can_use, remaining = can_use_feature(uid, "gpt_queries")
@@ -671,6 +722,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         answer = ask_yandexgpt(region, prompt)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
+        user.pop("state", None)
+        user.pop("current_category", None)
+        save_data()
         return
     elif any(kw in text_lower for kw in ["лунный", "календарь посадок", "лунный календарь"]):
         year = datetime.now().year
@@ -708,6 +762,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         use_feature(uid, "gpt_queries")
         answer = ask_yandexgpt(user.get("region", "Moscow"), text)
         await update.message.reply_text(answer, reply_markup=main_keyboard())
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -842,28 +897,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif data.startswith("premium_"):
         plan = data.split("_")[1]
-       
+      
         # ДЕБАГ
         print(f"[DEBUG-PREMIUM] Нажат тариф '{plan}' пользователем {uid}")
         await query.answer(f"[ТЕСТ] Пытаемся создать платёж для {plan}...", show_alert=True)
-       
+      
         plans = {
             "day": {"amount": "10.00", "desc": "Премиум на 1 день"},
             "week": {"amount": "50.00", "desc": "Премиум на 7 дней"},
             "month": {"amount": "150.00", "desc": "Премиум на 30 дней"},
             "year": {"amount": "1500.00", "desc": "Премиум на 365 дней"},
         }
-       
+      
         if plan not in plans:
             print(f"[DEBUG-PREMIUM] Неизвестный план: {plan}")
             await query.answer("Неизвестный тариф", show_alert=True)
             return
-       
+      
         p = plans[plan]
-       
+      
         try:
             print(f"[DEBUG-PREMIUM] Создаём платёж: {p['amount']} RUB, описание: {p['desc']}")
-           
+          
             idempotency_key = str(uuid.uuid4())
             payment = Payment.create({
                 "amount": {
@@ -881,10 +936,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "plan": plan
                 }
             }, idempotency_key)
-           
+          
             payment_url = payment.confirmation.confirmation_url
             print(f"[DEBUG-PREMIUM] Ссылка получена: {payment_url}")
-           
+          
             await query.message.reply_text(
                 f"Для активации премиум перейдите по ссылке:\n\n"
                 f"{payment_url}\n\n"
@@ -896,11 +951,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import traceback
             print(traceback.format_exc())
             await query.answer(f"Ошибка создания платежа: {str(e)}", show_alert=True)
+
 # ─── Добавляем handlers ───
 application.add_handler(CommandHandler("start", cmd_start))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 application.add_handler(CallbackQueryHandler(callback_handler))
+
 # ─── Фоновые задачи ───
 def reminders_checker():
     print("[НАПОМИНАНИЕ-ПРОВЕРКА] Фоновая задача запущена")
@@ -935,14 +992,11 @@ def reminders_checker():
                         print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Проверяем напоминание {rem['id']}: {rem_time.isoformat()}")
                         if rem_time <= user_local_now:
                             print(f"[НАПОМИНАНИЕ-ПРОВЕРКА] Время пришло для uid={uid_str}! Отправляем: {rem['text']}")
-                            asyncio.run_coroutine_threadsafe(
-                                application.bot.send_message(
-                                    chat_id=int(uid_str),
-                                    text=f"🔔 Напоминание!\n{rem['text']}",
-                                    reply_markup=main_keyboard()
-                                ),
-                                main_loop
-                            ).result(timeout=8)
+                            application.bot.send_message(
+                                chat_id=int(uid_str),
+                                text=f"🔔 Напоминание!\n{rem['text']}",
+                                reply_markup=main_keyboard()
+                            )
                             mark_reminder_sent(uid_str, rem["id"])
                             changed = True
                     except Exception as e:
@@ -953,6 +1007,7 @@ def reminders_checker():
         except Exception as outer_e:
             print(f"[НАПОМИНАНИЕ-ПРОВЕРКА-КРИТИЧЕСКАЯ] {outer_e}")
         time.sleep(60)
+
 # ─── Lifespan (startup / shutdown) ───
 @app.on_event("startup")
 async def startup_event():
@@ -975,10 +1030,12 @@ async def startup_event():
     print("[STARTUP] Запущена проверка напоминаний")
     threading.Thread(target=premium_expiration_checker, daemon=True).start()
     print("Фоновые проверки запущены")
+
 @app.on_event("shutdown")
 async def shutdown_event():
     print("Остановка Telegram Application...")
     await application.stop()
     await application.shutdown()
     print("Telegram Application остановлен")
+
 print("Приложение готово к запуску под uvicorn / FastAPI")
