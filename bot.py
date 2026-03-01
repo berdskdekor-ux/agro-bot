@@ -364,7 +364,8 @@ def category_keyboard():
         row = [KeyboardButton(c) for c in cats[i:i+2]]
         keyboard.append(row)
     keyboard.append([KeyboardButton("← Назад в меню")])
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, row_width=2)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)   # ← без row_width
+
 
 def submenu_keyboard(category):
     cultures = CATEGORIES.get(category, [])
@@ -376,7 +377,7 @@ def submenu_keyboard(category):
         KeyboardButton("⬅️ Назад к категориям"),
         KeyboardButton("← В главное меню")
     ])
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, row_width=3)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)   # ← без row_width
 
 # ─── YooKassa webhook ─── (исправлено: прямой вызов send_message)
 @app.post("/yookassa-webhook")
