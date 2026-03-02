@@ -20,6 +20,7 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
+YANDEX_SEARCH_TOKEN = os.getenv("YANDEX_SEARCH_TOKEN")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 required = {
@@ -185,24 +186,99 @@ def premium_expiration_checker():
             print("Обновлены статусы премиум-доступа")
         time.sleep(300) # 5 минут
 # ─── YandexGPT ───
-def ask_yandexgpt(region, question):
+def search_yandex_web(query: str, max_results: int = 5) -> str:
+    """Поиск в Яндексе через Search API v2. Возвращает форматированные сниппеты или пустую строку."""
+    if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
+        print("[SEARCH] Нет токена или folder_id → поиск отключён")
+        return ""
+
+    url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
+    headers = {
+        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN}",
+        "x-folder-id": YANDEX_FOLDER_ID,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "query": {"text": query, "language": "ru"},
+        "pageSize": max_results,
+        "sort": "relevance"
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        if r.status_code != 200:
+            print(f"[SEARCH] Ошибка {r.status_code}: {r.text[:300]}")
+            return ""
+
+        data = r.json()
+        items = data.get("items", [])
+        if not items:
+            return ""
+
+        lines = ["Поиск Яндекса нашёл актуальную информацию:"]
+        for item in items[:max_results]:
+            title   = item.get("title", "—")
+            url     = item.get("url", "—")
+            snippet = item.get("snippet", "—")[:280]
+            if len(snippet) > 0:
+                lines.append(f"**{title}**\n{snippet}…\n{url}\n")
+        return "\n".join(lines) + "\n"
+
+    except Exception as e:
+        print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
+        return ""
+
+
+def ask_yandexgpt(region: str, question: str) -> str:
+    """
+    Новый вариант: сначала поиск → если есть свежие данные → добавляем их в промпт.
+    Если поиска нет или он пустой → просто старый запрос к GPT.
+    """
+    # 1. Пробуем поиск
+    search_results = search_yandex_web(question)
+
+    system_prompt = (
+        f"Ты агроном-консультант. Регион: {region}. "
+        "Отвечай на русском языке, понятно, пошагово, по делу. "
+        "Если есть свежие данные из поиска — опирайся на них в первую очередь."
+    )
+
+    messages = [{"role": "system", "text": system_prompt}]
+
+    # 2. Если поиск дал результат — добавляем его как контекст
+    if search_results:
+        messages.append({
+            "role": "user",
+            "text": f"Свежие данные из поиска Яндекса:\n{search_results}\n\nВопрос пользователя: {question}"
+        })
+    else:
+        messages.append({"role": "user", "text": question})
+
     try:
         url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-        headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Api-Key {YANDEX_API_KEY}",
+            "Content-Type": "application/json"
+        }
         data = {
             "modelUri": f"gpt://{YANDEX_FOLDER_ID}/yandexgpt-lite",
-            "completionOptions": {"stream": False, "temperature": 0.4, "maxTokens": 1200},
-            "messages": [
-                {"role": "system", "text": f"Ты агроном-консультант. Регион: {region}. Отвечай на русском, пошагово, понятно."},
-                {"role": "user", "text": question}
-            ]
+            "completionOptions": {"stream": False, "temperature": 0.45, "maxTokens": 1400},
+            "messages": messages
         }
-        response = requests.post(url, headers=headers, json=data, timeout=15)
-        response.raise_for_status()
-        return response.json()["result"]["alternatives"][0]["message"]["text"].strip()
+
+        r = requests.post(url, headers=headers, json=data, timeout=18)
+        r.raise_for_status()
+        text = r.json()["result"]["alternatives"][0]["message"]["text"].strip()
+
+        # Добавляем метку, если использовался поиск
+        if search_results:
+            text += "\n\n(использованы свежие данные поиска Яндекса на март 2026)"
+
+        return text
+
     except Exception as e:
-        print(f"YandexGPT FAIL: {type(e).__name__}: {str(e)}")
-        return f"Ошибка YandexGPT: {str(e)}. Попробуй спросить проще или позже."
+        print(f"[GPT ERROR] {type(e).__name__}: {e}")
+        return f"Ошибка ответа агронома: {str(e)}. Попробуй спросить проще."
 # ─── Погода ───
 def get_week_weather(city):
     try:
