@@ -194,10 +194,10 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     headers = {
-        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN}",
-        "x-folder-id": YANDEX_FOLDER_ID,
-        "Content-Type": "application/json"
-    }
+    "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN.strip()}",   # ← .strip() убирает пробелы и \n с краёв
+    "x-folder-id": YANDEX_FOLDER_ID,
+    "Content-Type": "application/json"
+}
     payload = {
         "query": {"text": query, "language": "ru"},
         "pageSize": max_results,
