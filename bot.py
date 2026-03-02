@@ -187,7 +187,6 @@ def premium_expiration_checker():
         time.sleep(300) # 5 минут
 # ─── YandexGPT ───
 def search_yandex_web(query: str, max_results: int = 5) -> str:
-    """Поиск в Яндексе через Search API v2. Возвращает форматированные сниппеты или пустую строку."""
     if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
         print("[SEARCH] Нет токена или folder_id → поиск отключён")
         return ""
@@ -201,7 +200,7 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
     payload = {
         "query": {
             "query_text": query,
-            "search_type": "web",
+            "search_type": "SEARCH_TYPE_RU",   # ← исправлено!
             "language": "ru"
         },
         "page_size": max_results,
@@ -210,23 +209,29 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
 
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
-        print(f"[SEARCH] Статус: {r.status_code}, Ответ: {r.text[:400]}")  # ← для отладки
+        print(f"[SEARCH] Запрос: {query[:80]}... → Статус: {r.status_code}")
+        print(f"[SEARCH] Ответ (первые 500 символов): {r.text[:500]}")  # для отладки
+
         if r.status_code != 200:
+            print(f"[SEARCH ERROR {r.status_code}]: {r.text}")
             return ""
 
         data = r.json()
         items = data.get("items", [])
         if not items:
+            print("[SEARCH] Результаты пустые")
             return ""
 
         lines = ["Поиск Яндекса нашёл актуальную информацию:"]
         for item in items[:max_results]:
-            title   = item.get("title", "—")
-            url     = item.get("url", "—")
-            snippet = item.get("snippet", "—")[:280]
+            title   = item.get("title",   "—")
+            url     = item.get("url",     "—")
+            snippet = item.get("snippet", "—")[:280].strip()
             if snippet:
                 lines.append(f"**{title}**\n{snippet}…\n{url}\n")
-        return "\n".join(lines) + "\n"
+        result = "\n".join(lines) + "\n"
+        print(f"[SEARCH SUCCESS] Найдено {len(items)} результатов")
+        return result
 
     except Exception as e:
         print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
