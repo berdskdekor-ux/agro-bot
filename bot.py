@@ -721,7 +721,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             calendar_text + "\n\nВыберите категорию культуры:",
             reply_markup=category_keyboard(),
-            parse_mode="Markdown"
         )
         return
     elif text in CATEGORIES:
