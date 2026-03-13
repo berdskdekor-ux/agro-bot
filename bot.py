@@ -187,20 +187,20 @@ def premium_expiration_checker():
         time.sleep(300) # 5 минут
 # ─── YandexGPT ───
 def search_yandex_web(query: str, max_results: int = 5) -> str:
-    if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
-        print("[SEARCH] Нет токена или folder_id → поиск отключён")
+    if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
+        print("[SEARCH] Нет API-ключа или folder_id → поиск отключён")
         return ""
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     headers = {
-        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN.strip()}",
+        "Authorization": f"Api-Key {YANDEX_API_KEY.strip()}",
         "x-folder-id": YANDEX_FOLDER_ID,
         "Content-Type": "application/json"
     }
     payload = {
         "query": {
             "query_text": query,
-            "search_type": "SEARCH_TYPE_RU",   # ← исправлено!
+            "search_type": "SEARCH_TYPE_RU",
             "language": "ru"
         },
         "page_size": max_results,
@@ -210,29 +210,22 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         print(f"[SEARCH] Запрос: {query[:80]}... → Статус: {r.status_code}")
-        print(f"[SEARCH] Ответ (первые 500 символов): {r.text[:500]}")  # для отладки
-
+        print(f"[SEARCH] Ответ: {r.text[:500]}")
         if r.status_code != 200:
             print(f"[SEARCH ERROR {r.status_code}]: {r.text}")
             return ""
-
         data = r.json()
         items = data.get("items", [])
         if not items:
-            print("[SEARCH] Результаты пустые")
             return ""
-
         lines = ["Поиск Яндекса нашёл актуальную информацию:"]
         for item in items[:max_results]:
-            title   = item.get("title",   "—")
-            url     = item.get("url",     "—")
+            title   = item.get("title", "—")
+            url     = item.get("url", "—")
             snippet = item.get("snippet", "—")[:280].strip()
             if snippet:
                 lines.append(f"**{title}**\n{snippet}…\n{url}\n")
-        result = "\n".join(lines) + "\n"
-        print(f"[SEARCH SUCCESS] Найдено {len(items)} результатов")
-        return result
-
+        return "\n".join(lines) + "\n"
     except Exception as e:
         print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
         return ""
