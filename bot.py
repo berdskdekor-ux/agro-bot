@@ -21,6 +21,7 @@ YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 YANDEX_SEARCH_TOKEN = os.getenv("YANDEX_SEARCH_TOKEN")
+YANDEX_SEARCH_API_KEY = os.getenv("YANDEX_SEARCH_API_KEY")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 required = {
@@ -193,7 +194,7 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     headers = {
-        "Authorization": f"Api-Key {YANDEX_API_KEY.strip()}",
+        "Authorization": f"Api-Key {YANDEX_SEARCH_API_KEY.strip()}",
         "x-folder-id": YANDEX_FOLDER_ID,
         "Content-Type": "application/json"
     }
