@@ -1,3 +1,5 @@
+
+
 # bot.py (или main.py) — полный код под FastAPI / ASGI
 import os
 import json
@@ -21,7 +23,6 @@ YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 YANDEX_SEARCH_TOKEN = os.getenv("YANDEX_SEARCH_TOKEN")
-YANDEX_SEARCH_API_KEY = os.getenv("YANDEX_SEARCH_API_KEY")
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 required = {
@@ -188,20 +189,20 @@ def premium_expiration_checker():
         time.sleep(300) # 5 минут
 # ─── YandexGPT ───
 def search_yandex_web(query: str, max_results: int = 5) -> str:
-    if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
-        print("[SEARCH] Нет API-ключа или folder_id → поиск отключён")
+    if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
+        print("[SEARCH] Нет токена или folder_id → поиск отключён")
         return ""
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     headers = {
-        "Authorization": f"Api-Key {YANDEX_SEARCH_API_KEY.strip()}",
+        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN.strip()}",
         "x-folder-id": YANDEX_FOLDER_ID,
         "Content-Type": "application/json"
     }
     payload = {
         "query": {
             "query_text": query,
-            "search_type": "SEARCH_TYPE_RU",
+            "search_type": "SEARCH_TYPE_RU",   # ← исправлено!
             "language": "ru"
         },
         "page_size": max_results,
@@ -211,22 +212,29 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         print(f"[SEARCH] Запрос: {query[:80]}... → Статус: {r.status_code}")
-        print(f"[SEARCH] Ответ: {r.text[:500]}")
+        print(f"[SEARCH] Ответ (первые 500 символов): {r.text[:500]}")  # для отладки
+
         if r.status_code != 200:
             print(f"[SEARCH ERROR {r.status_code}]: {r.text}")
             return ""
+
         data = r.json()
         items = data.get("items", [])
         if not items:
+            print("[SEARCH] Результаты пустые")
             return ""
+
         lines = ["Поиск Яндекса нашёл актуальную информацию:"]
         for item in items[:max_results]:
-            title   = item.get("title", "—")
-            url     = item.get("url", "—")
+            title   = item.get("title",   "—")
+            url     = item.get("url",     "—")
             snippet = item.get("snippet", "—")[:280].strip()
             if snippet:
                 lines.append(f"**{title}**\n{snippet}…\n{url}\n")
-        return "\n".join(lines) + "\n"
+        result = "\n".join(lines) + "\n"
+        print(f"[SEARCH SUCCESS] Найдено {len(items)} результатов")
+        return result
+
     except Exception as e:
         print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
         return ""
@@ -715,6 +723,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             calendar_text + "\n\nВыберите категорию культуры:",
             reply_markup=category_keyboard(),
+            parse_mode="Markdown"
         )
         return
     elif text in CATEGORIES:
