@@ -189,17 +189,22 @@ def premium_expiration_checker():
         time.sleep(300) # 5 минут
 # ─── YandexGPT ───
 def search_yandex_web(query: str, max_results: int = 5) -> str:
-    if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
-        print(f"[SEARCH] Ошибка: отсутствует токен или folder_id")
-        print(f"  TOKEN: {'есть' if YANDEX_SEARCH_TOKEN else 'нет'}")
-        print(f"  FOLDER_ID: {'есть' if YANDEX_FOLDER_ID else 'нет'}")
+    if not YANDEX_SEARCH_TOKEN:
+        print("[SEARCH] Ошибка: YANDEX_SEARCH_TOKEN отсутствует")
         return ""
+    
+    if not YANDEX_FOLDER_ID or YANDEX_FOLDER_ID.strip() == "":
+        print("[SEARCH] ОШИБКА: YANDEX_FOLDER_ID пустой!")
+        return ""
+
+    folder_id = YANDEX_FOLDER_ID.strip()
+    print(f"[SEARCH] Запрос: {query[:70]}... | Folder_ID: '{folder_id}' (длина: {len(folder_id)})")
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     
     headers = {
         "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN}",
-        "x-folder-id": YANDEX_FOLDER_ID.strip(),   # ← Это важно!
+        "x-folder-id": folder_id,           # ← критично
         "Content-Type": "application/json"
     }
 
@@ -214,20 +219,17 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
     }
 
     try:
-        print(f"[SEARCH] Запрос: {query[:80]}... | Folder: {YANDEX_FOLDER_ID[:10]}...")
-        
         r = requests.post(url, headers=headers, json=payload, timeout=15)
         
-        print(f"[SEARCH] Статус: {r.status_code}")
+        print(f"[SEARCH] Статус ответа: {r.status_code}")
         
         if r.status_code == 200:
             data = r.json()
             items = data.get("items", [])
-            print(f"[SEARCH] Успешно! Найдено результатов: {len(items)}")
-            
+            print(f"[SEARCH] Успешно! Найдено {len(items)} результатов")
+            # ... (остальной код обработки результатов остаётся как был)
             if not items:
                 return ""
-                
             lines = ["🔍 Свежие данные из Яндекса:"]
             for item in items[:max_results]:
                 title = item.get("title", "—")
@@ -238,11 +240,11 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
             return "\n\n".join(lines) + "\n"
             
         else:
-            print(f"[SEARCH ERROR {r.status_code}]: {r.text[:600]}")
+            print(f"[SEARCH ERROR {r.status_code}]: {r.text[:800]}")
             return ""
             
     except Exception as e:
-        print(f"[SEARCH EXCEPTION]: {type(e).__name__}: {e}")
+        print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
         return ""
 
 
