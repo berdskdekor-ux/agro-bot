@@ -190,19 +190,23 @@ def premium_expiration_checker():
 # ─── YandexGPT ───
 def search_yandex_web(query: str, max_results: int = 5) -> str:
     if not YANDEX_SEARCH_TOKEN or not YANDEX_FOLDER_ID:
-        print("[SEARCH] Нет токена или folder_id → поиск отключён")
+        print(f"[SEARCH] Ошибка: отсутствует токен или folder_id")
+        print(f"  TOKEN: {'есть' if YANDEX_SEARCH_TOKEN else 'нет'}")
+        print(f"  FOLDER_ID: {'есть' if YANDEX_FOLDER_ID else 'нет'}")
         return ""
 
     url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
+    
     headers = {
-        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN.strip()}",
-        "x-folder-id": YANDEX_FOLDER_ID,
+        "Authorization": f"Bearer {YANDEX_SEARCH_TOKEN}",
+        "x-folder-id": YANDEX_FOLDER_ID.strip(),   # ← Это важно!
         "Content-Type": "application/json"
     }
+
     payload = {
         "query": {
             "query_text": query,
-            "search_type": "SEARCH_TYPE_RU",   # ← исправлено!
+            "search_type": "SEARCH_TYPE_RU",
             "language": "ru"
         },
         "page_size": max_results,
@@ -210,33 +214,35 @@ def search_yandex_web(query: str, max_results: int = 5) -> str:
     }
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
-        print(f"[SEARCH] Запрос: {query[:80]}... → Статус: {r.status_code}")
-        print(f"[SEARCH] Ответ (первые 500 символов): {r.text[:500]}")  # для отладки
-
-        if r.status_code != 200:
-            print(f"[SEARCH ERROR {r.status_code}]: {r.text}")
+        print(f"[SEARCH] Запрос: {query[:80]}... | Folder: {YANDEX_FOLDER_ID[:10]}...")
+        
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        
+        print(f"[SEARCH] Статус: {r.status_code}")
+        
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("items", [])
+            print(f"[SEARCH] Успешно! Найдено результатов: {len(items)}")
+            
+            if not items:
+                return ""
+                
+            lines = ["🔍 Свежие данные из Яндекса:"]
+            for item in items[:max_results]:
+                title = item.get("title", "—")
+                url_ = item.get("url", "—")
+                snippet = item.get("snippet", "")[:280].strip()
+                if snippet:
+                    lines.append(f"**{title}**\n{snippet}…\n{url_}")
+            return "\n\n".join(lines) + "\n"
+            
+        else:
+            print(f"[SEARCH ERROR {r.status_code}]: {r.text[:600]}")
             return ""
-
-        data = r.json()
-        items = data.get("items", [])
-        if not items:
-            print("[SEARCH] Результаты пустые")
-            return ""
-
-        lines = ["Поиск Яндекса нашёл актуальную информацию:"]
-        for item in items[:max_results]:
-            title   = item.get("title",   "—")
-            url     = item.get("url",     "—")
-            snippet = item.get("snippet", "—")[:280].strip()
-            if snippet:
-                lines.append(f"**{title}**\n{snippet}…\n{url}\n")
-        result = "\n".join(lines) + "\n"
-        print(f"[SEARCH SUCCESS] Найдено {len(items)} результатов")
-        return result
-
+            
     except Exception as e:
-        print(f"[SEARCH EXCEPTION] {type(e).__name__}: {e}")
+        print(f"[SEARCH EXCEPTION]: {type(e).__name__}: {e}")
         return ""
 
 
